@@ -208,7 +208,7 @@ namespace FilterReads
 
                     if (args[p] == "-l" || args[p] == "-len")
                     {
-                        if (!CheckForParamValue(p, args.Length, "number expected after -l|-len"))
+                        if (!CheckForParamValue(p, args.Length, "number expected after -l|-length"))
                             return;
                         try
                         {
@@ -627,7 +627,7 @@ namespace FilterReads
 
         private static void WriteUsage()
         {
-            Console.WriteLine("usage: FilterReads -r tag -t threads [-pairs] [-matches] [-len minLen] [-s] [-qt minQual] [-o outputDir] [-fasta] [-discards] [+/-lcf] [+f|fz includeFilter minMatches[%]] [-f|fz excludeFilter minMatches[%|pct]] readsFNs");
+            Console.WriteLine("usage: FilterReads -r tag -t threads [-pairs] [-matches] [-len minLen] [-s] [-qt minQual] [-o outputDir] [-fasta] [-discards] [+/-lcf] [+f|fz includeFilter minMatches[%|pct]] [-f|fz excludeFilter minMatches[%|pct]] readsFNs");
         }
 
         private static bool CheckForParamValue(int p, int argsLength, string msg)
@@ -875,7 +875,7 @@ namespace FilterReads
                         Sequence currentRead = readSet[p][r];
 
                         if (qualTrim)
-                            basesQualTrimmed += SeqFiles.TrimTrailingPoorQuals(readSet[p][r], qualsSet[p][r], 20, qualOffset);
+                            basesQualTrimmed += SeqFiles.TrimTrailingPoorQuals(readSet[p][r], qualsSet[p][r], minQual, qualOffset);
 
                         if (currentRead.Length < minLen)
                         {

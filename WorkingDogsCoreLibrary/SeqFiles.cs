@@ -10,16 +10,16 @@ namespace WorkingDogsCore
     public class SeqFiles
     {
         public const int formatNone = 0;            // no format specified
-		public const int formatFASTA = 1;			// fasta with multiple data lines (.fna, .fa, .fasta, .fas, ...)
+        public const int formatFASTA = 1;			// fasta with multiple data lines (.fna, .fa, .fasta, .fas, ...)
         public const int formatFNA = 1;             // synonym
         public const int formatFASTQ = 2;           // fastq 
-		
-		enum Formats
-		{
-			None = 0,
-			FASTA = 1,
-			FASTQ = 2
-		}
+
+        enum Formats
+        {
+            None = 0,
+            FASTA = 1,
+            FASTQ = 2
+        }
 
         static char[] spaceDelimiter = new char[] { ' ' };
 
@@ -438,15 +438,26 @@ namespace WorkingDogsCore
 
             return qualBase;
         }
-
+   
+        // finds any trailing poor qual region in a Sequence read and trims the read back to good bases
         public static int TrimTrailingPoorQuals(Sequence read, Sequence quals, int trimQual, int qualOffset)
         {
-            const int windowLength = 5;
-            const int passesNeededInWindow = windowLength / 2 + 1;
+            const int windowLength = 10;
+            const int passesNeededInWindow = windowLength * 3 / 4;
             int basesTrimmed = 0;
             char[] qualCharArray = quals.Bases;
+            int goodBaseIdx = 0;
 
-            for (int i = quals.Length - 1; i > windowLength; i--)
+            for (int i = quals.Length - 1; i >= 0; i--)
+                if (((int)qualCharArray[i] - qualOffset) > trimQual)
+                {
+                    goodBaseIdx = i;
+                    break;
+                }
+
+            basesTrimmed = quals.Length - goodBaseIdx;
+
+            for (int i = goodBaseIdx; i > windowLength; i--)
             {
                 int passedInWindow = 0;
                 for (int w = 0; w < windowLength; w++)
@@ -470,13 +481,28 @@ namespace WorkingDogsCore
             return basesTrimmed;
         }
 
-        public static int TrimTrailingPoorQuals(string read, string quals, int trimQual, int qualOffset)
+        // finds the trailing poor qual region in a read and returns the length that should be trimmed to get back to more robust data
+        public static int FindTrailingPoorQuals(string read, string quals, int trimQual, int qualOffset)
         {
-            const int windowLength = 5;
-            const int passesNeededInWindow = windowLength - 1;
+            const int windowLength = 10;
+            const int passesNeededInWindow = windowLength * 3 / 4;
             int basesToTrim = 0;
+            int goodBaseIdx = 0;
 
-            for (int i = quals.Length - 1; i > windowLength; i--)
+            int[] qualScores = new int[quals.Length];
+            for (int i = 0; i < quals.Length; i++)
+                qualScores[i] = (int)quals[i] - qualOffset;
+
+            for (int i = quals.Length - 1; i >= 0; i--)
+                if (((int)quals[i] - qualOffset) > trimQual)
+                {
+                    goodBaseIdx = i;
+                    break;
+                }
+
+            basesToTrim = quals.Length - goodBaseIdx;
+
+            for (int i = goodBaseIdx; i > windowLength; i--)
             {
                 int passedInWindow = 0;
                 for (int w = 0; w < windowLength; w++)
@@ -495,6 +521,7 @@ namespace WorkingDogsCore
 
             return basesToTrim;
         }
+
         public static string LFConvention(string readsFN)
         {
             StreamReader reads = new StreamReader(readsFN);

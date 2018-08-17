@@ -19,7 +19,7 @@ Canonical means that the reverse-complement of every kMer is calculated, and onl
 BuildFilter can also attempt to find and discard low-complexity reads/kMers. These are often not very useful or informative, and can result in overly accepting filters.
 
 The full set of BuildFilter parameters is:
-- -k kMer_length  
+- -k *kMer_length*  
 Length of kMers in the filter. This would normally be at least 20 to take advantage of the distinctiveness of such kMers. kMers cannot be longer than 32 bases.
 - +lcf   
 Turns on low-complexity filtering of the kMers/reads. This is the default..
@@ -27,9 +27,9 @@ Turns on low-complexity filtering of the kMers/reads. This is the default..
 Turns off low-complexity filtering of the kMers/reads. Not usually desirable but needed in cases such as iterative gene-filtering.
 - -s   
 Search for matching file names in any subdirectories as well as in the current directory. Default is to only look for matching file names in the current directory. 
-- kMersFN  
+- *kMersFN*  
 (optional) Name for the generated kMers file. If no kMersFn name is given, one is constructed from the first (and only in this case) seqsFN by adding _kMer_length.mer at its end. 
-- seqsFNP  
+- *seqsFNP*  
 List of file names/patterns of sequences to be tiled for kMers. e.g. RDPv16+RefSeq_5-18_16S_NC.fa
 There can be any number of file names (or file name patterns), and all of these will be tiled to generate a single kMer file.  
 

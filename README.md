@@ -1,4 +1,5 @@
 WorkingDogs
+
 The home repo for the Working Dogs bioinformatics tools: Blue, Pup, Kelpie and other members of the pack. These tools are all kMer-based and make use of the very useful almost-always-unique properties of moderate-length kMers (k=20+).
 
 Blue is a DNA read error corrector based on kMers and their context. It was published as "Blue: correcting sequencing errors using consensus and context" in Bioinformatics. 2014; 30(19), 2723-2732. Release 2.0 will appear here around the middle of 2018.

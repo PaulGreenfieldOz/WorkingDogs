@@ -14,6 +14,7 @@ namespace WorkingDogsCore
         public MerTable<ulong> kMersTable = null;
 
         public long distinctMersLoaded = 0;
+        public long distinctMersPresent = 0;
         public long totalMersLoaded = 0;
         public int averageDepthLoaded = 0;
 
@@ -53,7 +54,8 @@ namespace WorkingDogsCore
 
             averageDepthLoaded = (int)(totalMersLoaded / distinctMersLoaded);
 
-            hdubFilter = GenerateHDUBFilter(hdubMerList);
+            if (hdubMerList != null)
+                hdubFilter = GenerateHDUBFilter(hdubMerList);
             hdubMerList = null;
 
             Console.WriteLine("Finished loading kMer table. " +
@@ -85,6 +87,7 @@ namespace WorkingDogsCore
                     rcCount = cbtFile.ReadInt32();
                     countPair = ((ulong)asReadCount << 32) + (ulong)rcCount;
                     sumCount = asReadCount + rcCount;
+                    distinctMersPresent++;
                 }
                 catch
                 {

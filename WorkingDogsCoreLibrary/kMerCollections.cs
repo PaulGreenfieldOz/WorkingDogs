@@ -35,15 +35,15 @@ namespace WorkingDogsCore
                 partitioned = true;
                 keySize = (int)Math.Ceiling(Math.Log(dictionarySize / maxTable, 4));    // find minimum key size
                 if (keySize < 1)
-                    keySize = 1;                                                                // must partition on at least one base
-                noOfPartitions = (int)Math.Pow(4, keySize);                                     // giving this many partitions
-                keyBaseShift = 64 - keySize * 2;                                                // shift right this many bits to extract the partition no.
-                int partitionLength = (int)(dictionarySize / noOfPartitions);           // with this average length (but scaled to reflect canonical distributions)
+                    keySize = 1;                                                        // must partition on at least one base
+                noOfPartitions = (int)Math.Pow(4, keySize);                             // giving this many partitions
+                keyBaseShift = 64 - keySize * 2;                                        // shift right this many bits to extract the partition no.
+                long partitionLength = (int)(dictionarySize / noOfPartitions);          // with this average length (but scaled to reflect canonical distributions)
 
                 dictionaryPartitions = new kMerDictionary<TV>[noOfPartitions];
                 for (int i = 0; i < noOfPartitions; i++)
                 {
-                    int scaledPartitionLength = 2 * partitionLength * (noOfPartitions - i) / noOfPartitions; // =(16-I2)/16*2*(F19/16)
+                    int scaledPartitionLength = (int)(2 * partitionLength * (noOfPartitions - i) / noOfPartitions); 
                     dictionaryPartitions[i] = new kMerDictionary<TV>(scaledPartitionLength, merSize);
                 }
             }
@@ -118,6 +118,26 @@ namespace WorkingDogsCore
             get
             {
                 return capacity;
+            }
+        }
+
+        public int[] PartitionCounts
+        {
+            get
+            {
+                if (partitioned)
+                {
+                    int[] partitionCounts = new int[noOfPartitions];
+                    for (int i = 0; i < noOfPartitions; i++)
+                        partitionCounts[i] = dictionaryPartitions[i].Count;
+                    return partitionCounts;
+                }
+                else
+                {
+                    int[] partitionCounts = new int[1];
+                    partitionCounts[0] = dictionary.Count;
+                    return partitionCounts;
+                }
             }
         }
 
@@ -254,7 +274,7 @@ namespace WorkingDogsCore
                 hashSetPartitions = new kMerHashSet[noOfPartitions];
                 for (int i = 0; i < noOfPartitions; i++)
                 {
-                    int scaledPartitionLength = canonical ? (int)(2 * partitionLength * (noOfPartitions - i) / noOfPartitions) : (int)partitionLength;
+                    int scaledPartitionLength = canonical ? (int)(2 * partitionLength * (noOfPartitions - i) / noOfPartitions) : (int)(partitionLength+partitionLength/10);
                     hashSetPartitions[i] = new kMerHashSet(scaledPartitionLength, merSize);  // scale partition sizes to allow for effects of canonical kMer distributions
                 }
             }
@@ -336,7 +356,7 @@ namespace WorkingDogsCore
         }
 
         public void Optimise()
-        {          
+        {
             if (partitioned)
             {
                 for (int i = 0; i < noOfPartitions; i++)
@@ -344,16 +364,15 @@ namespace WorkingDogsCore
                     if ((float)hashSetPartitions[i].Count / (float)hashSetPartitions[i].Capacity < 0.8)
                     {
                         hashSetPartitions[i].Optimise();
-                        GC.Collect();
+                        GC.Collect(2);
                     }
                 }
             }
             else
             {
                 hashSet.Optimise();
+                GC.Collect(2);
             }
-
-            GC.Collect();
         }
 
         public void Clear()
@@ -1044,7 +1063,8 @@ namespace WorkingDogsCore
             this.lengthBuckets = buckets.Length;
             this.lengthEntries = entries.Length;
             this.resizeTriggerPoint = capacity;
-            this.rightShiftBases = merSize > 16 ? 64 - merSize * 2 : 0;     // right-adjust the low half of the kMer if there is one 
+            //this.rightShiftBases = merSize > 16 ? 64 - merSize * 2 : 0;     // right-adjust the low half of the kMer if there is one 
+            this.rightShiftBases = 64 - merSize * 2;        // right-adjust the kMer for hashing
             this.merSize = merSize;
         }
 
@@ -1170,7 +1190,7 @@ namespace WorkingDogsCore
 
         public void Optimise()
         { 
-            int lengthNewBuckets = count + count / 3;
+            int lengthNewBuckets = count + count / 2;
             int[] newBuckets = new int[lengthNewBuckets];
             for (int i = 0; i < lengthNewBuckets; i++)
             {
@@ -1317,6 +1337,7 @@ namespace WorkingDogsCore
 
             const int positiveInt32Mask = 0x7fffffff;
 
+            key = key >> rightShiftBases;
             ulong foldedUL = (key >> 32) ^ (key & 0xffffffff);
             return (int)(foldedUL) & positiveInt32Mask;
 

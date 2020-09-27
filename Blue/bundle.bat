@@ -12,4 +12,5 @@ call mkbundle -o ubuntu-16.04\Blue Blue.exe --simple --cross mono-5.14.0-ubuntu-
 call mkbundle -o ubuntu-18.04\Blue Blue.exe --simple --cross mono-5.14.0-ubuntu-18.04-x64
 call mkbundle -o debian-8\Blue Blue.exe --simple --cross mono-5.14.0-debian-8-x64
 call mkbundle -o debian-9\Blue Blue.exe --simple --cross mono-5.14.0-debian-9-x64
+
 copy Blue.exe Windows

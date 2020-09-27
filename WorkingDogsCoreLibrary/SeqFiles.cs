@@ -447,15 +447,16 @@ namespace WorkingDogsCore
             int basesTrimmed = 0;
             char[] qualCharArray = quals.Bases;
             int goodBaseIdx = 0;
+            int lastQualIdx = quals.Length - 1;
 
-            for (int i = quals.Length - 1; i >= 0; i--)
+            for (int i = lastQualIdx; i >= 0; i--)
                 if (((int)qualCharArray[i] - qualOffset) > trimQual)
                 {
                     goodBaseIdx = i;
                     break;
                 }
 
-            basesTrimmed = quals.Length - goodBaseIdx;
+            basesTrimmed = lastQualIdx - goodBaseIdx;
 
             for (int i = goodBaseIdx; i > windowLength; i--)
             {
@@ -651,7 +652,7 @@ namespace WorkingDogsCore
                 // get out parameters from the async call
                 fbd.EndInvoke(out EOF, iarFillBuffer);
                 // and reset the wait handle
-                iarFillBuffer.AsyncWaitHandle.Close();
+                //iarFillBuffer.AsyncWaitHandle.Close();
             }
             readsFile.Close();
             if (qualsFile != null)
@@ -678,7 +679,7 @@ namespace WorkingDogsCore
                         // get out parameters from the async call
                         fbd.EndInvoke(out EOF, iarFillBuffer);
                         // and reset the wait handle
-                        iarFillBuffer.AsyncWaitHandle.Close();
+                        //iarFillBuffer.AsyncWaitHandle.Close();
 
                         // and start the next buffer read
                         if (!EOF)
@@ -713,6 +714,52 @@ namespace WorkingDogsCore
                 }
             }
             return readsIdx;
+        }
+
+        public bool ReadRead(Sequence readHeader, Sequence readSeq, Sequence qualHeader, Sequence quals)
+        {
+            if (readsFromBuffer)
+            {
+                if (bufferEmpty)
+                {
+                    // wait for previous buffer fill to complete
+                    if (!iarFillBuffer.IsCompleted)
+                        iarFillBuffer.AsyncWaitHandle.WaitOne();
+
+                    // get out parameters from the async call
+                    fbd.EndInvoke(out EOF, iarFillBuffer);
+                    // and reset the wait handle
+                    //iarFillBuffer.AsyncWaitHandle.Close();
+
+                    // and start the next buffer read
+                    if (!EOF)
+                    {
+                        iarFillBuffer = fbd.BeginInvoke(readsFile, currentBufferIdx, previousBufferIdx, out EOF, null, null);
+                    }
+
+                    previousBufferIdx = currentBufferIdx;
+                    if (currentBufferIdx == 0)
+                        currentBufferIdx = 1;
+                    else
+                        currentBufferIdx = 0;
+
+                    nextLineIdx = 0;
+                    startOfNextRead = 0;
+                }
+
+                bufferEmpty = GetNextRead(currentBufferIdx, readHeader, readSeq, qualHeader, quals);
+            }
+            else
+            {
+                // if we're dealing with the rare file type of fasta with a separate quals, lock the pair of files before
+                // reading to ensure that we pick up pairs of reads/quals and just do unbuffered reads
+                lock (readsFile)
+                {
+                    EOF = SeqFiles.ReadRead(readsFile, qualsFile, fileFormat, readHeader, readSeq, qualHeader, quals);
+                }
+            }
+
+            return EOF;
         }
 
         private bool GetNextRead(int cbi, Sequence readHeader, Sequence readSeq, Sequence qualHeader, Sequence quals)

@@ -27,12 +27,12 @@ namespace WorkingDogsCore
         //                                               @, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, [,\\, ], ^, _
 
         // Translate bases to ACGT - collapsing ambiguous bases. Indexed by low 5 bits of char. Always map to first base of set, default is A
-        private static char[] baseToACGT = new char[] { '@', 'A', 'B', 'C', 'G', 'E', 'F', 'G', 'A', 'I', 'J', 'G', 'L', 'A', 'A', 'O', 'P', 'Q', 'G', 'G', 'T', 'U', 'G', 'A', 'X', 'T', 'Z', '[','\\', ']', '^', '_' };
+        private static char[] baseToACGT = new char[] { '@', 'A', 'B', 'C', 'G', 'E', 'F', 'G', 'A', 'I', 'J', 'G', 'L', 'A', 'A', 'O', 'P', 'Q', 'G', 'G', 'T', 'U', 'G', 'A', 'X', 'T', 'Z', '[', '\\', ']', '^', '_' };
         //                                               @,   A,   B,   C,   D,   E,   F,   G,   H,   I,   J,   K,   L,   M,   N,   O,   P,   Q,   R,   S,   T,   U,   V,   W,   X,   Y,   Z,   [,  \\,   ],   ^,   _
 
         // Complement bases - including ambiguous bases. Indexed by low 5 bits of char. Always map to first base in following table. Unknown are mapped to N
         public static char[] baseToComplement = new char[] { '@', 'T', 'V', 'G', 'H', 'N', 'N', 'C', 'D', 'N', 'N', 'M', 'N', 'K', 'N', 'N', 'N', 'N', 'Y', 'S', 'A', 'N', 'B', 'W', 'N', 'R', 'N', '[', '\\', ']', '^', '_' };
-        //                                                     @,   A,   B,   C,   D,   E,   F,   G,   H,   I,   J,   K,   L,   M,   N,   O,   P,   Q,   R,   S,   T,   U,   V,   W,   X,   Y,   Z,   [,  \\,   ],   ^,   _
+        //                                                    @,   A,   B,   C,   D,   E,   F,   G,   H,   I,   J,   K,   L,   M,   N,   O,   P,   Q,   R,   S,   T,   U,   V,   W,   X,   Y,   Z,   [,  \\,   ],   ^,   _
 
         //  b   meaning         reason                                  rcm     rcb
         //
@@ -186,11 +186,16 @@ namespace WorkingDogsCore
 
         // Takes a sequence (such as a primer) that can contain degenerate bases, and returns all possible expansions of this seq.
         // Degenerate bases are expanded, and variants containing up to subsWanted substitution differences are generated. 
-        public static void GenerateSeqVariants(string seq, int seqLength, char[] degenerateBases, Dictionary<char, List<char>> degenerateBaseExpansions, HashSet<string> variantsSet, int subsWanted)
+        public static void GenerateSeqVariants(string seq, int variedLength, char[] degenerateBases, Dictionary<char, List<char>> degenerateBaseExpansions, HashSet<string> variantsSet, int subsWanted)
         {
-            // trim seq down to common length if necessary
-            if (seq.Length > seqLength)
-                seq = seq.Substring(0, seqLength);
+            GenerateSeqVariants(seq, 0, variedLength, degenerateBases, degenerateBaseExpansions, variantsSet, subsWanted);
+        }
+
+        public static void GenerateSeqVariants(string seq, int startIdx, int variedLength, char[] degenerateBases, Dictionary<char, List<char>> degenerateBaseExpansions, HashSet<string> variantsSet, int subsWanted)
+        {
+            // trim seq down to common length if necessary (never used)
+            //if (seq.Length > seqLength)
+            //    seq = seq.Substring(0, seqLength);
 
             HashSet<string> expandedVariantsSet = new HashSet<string>();
 
@@ -219,10 +224,10 @@ namespace WorkingDogsCore
 
                     List<ulong> seqVariantsPacked = new List<ulong>();
                     ulong packedVariant = kMers.CondenseMer(startingVariant);
-                    kMers.GenerateMerSubVariants(packedVariant, seqVariantsPacked, seqLength);
+                    kMers.GenerateMerSubVariants(packedVariant, seqVariantsPacked, startIdx, variedLength);
                     foreach (ulong seqVariantPacked in seqVariantsPacked)
                     {
-                        string seqVariant = kMers.ExpandMer(seqVariantPacked, seqLength);
+                        string seqVariant = kMers.ExpandMer(seqVariantPacked, seq.Length);
                         if (!expandedVariantsSet.Contains(seqVariant))
                             expandedVariantsSet.Add(seqVariant);
                     }
@@ -235,11 +240,11 @@ namespace WorkingDogsCore
         }
 
         // simple GenerateSeqVariants (without degenerate bases)
-        public static void GenerateSeqVariants(string seq, int seqLength, HashSet<string> variantsSet, int subsWanted)
+        public static void GenerateSeqVariants(string seq, int variedLength, HashSet<string> variantsSet, int subsWanted)
         {
-            // trim seq down to specified length if necessary
-            if (seq.Length > seqLength)
-                seq = seq.Substring(0, seqLength);
+            // trim seq down to specified length if necessary (never used)
+            //if (seq.Length > seqLength)
+            //    seq = seq.Substring(0, seqLength);
 
             HashSet<string> expandedVariantsSet = new HashSet<string>();
 
@@ -257,10 +262,10 @@ namespace WorkingDogsCore
 
                     List<ulong> seqVariantsPacked = new List<ulong>();
                     ulong packedVariant = kMers.CondenseMer(startingVariant);
-                    kMers.GenerateMerSubVariants(packedVariant, seqVariantsPacked, seqLength);
+                    kMers.GenerateMerSubVariants(packedVariant, seqVariantsPacked, variedLength);
                     foreach (ulong seqVariantPacked in seqVariantsPacked)
                     {
-                        string seqVariant = kMers.ExpandMer(seqVariantPacked, seqLength);
+                        string seqVariant = kMers.ExpandMer(seqVariantPacked, seq.Length);
                         if (!expandedVariantsSet.Contains(seqVariant))
                             expandedVariantsSet.Add(seqVariant);
                     }
@@ -465,14 +470,18 @@ namespace WorkingDogsCore
                 return mer;
         }
 
-        public static int GenerateMerSubVariants(ulong mer, List<ulong> merVariants, int merSize)
+        public static int GenerateMerSubVariants(ulong mer, List<ulong> merVariants, int variedLength)
         {
-            int start = 0;
+            return GenerateMerSubVariants(mer, merVariants, 0, variedLength);
+        }
+
+        public static int GenerateMerSubVariants(ulong mer, List<ulong> merVariants, int startIdx, int variedLength)
+        {
             int variantsAdded = 0;
 
             ulong baseMask = 0xc000000000000000;
 
-            for (int m = start; m < merSize; m++)
+            for (int m = startIdx; m < variedLength; m++)
             {
                 ulong merWithHole = mer & ~(baseMask >> (m * 2));
                 for (ulong b = 0; b <= 3; b++)

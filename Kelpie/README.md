@@ -2,8 +2,11 @@
 
 Kelpie extracts/assembles full-length inter-primer sequences from WGS metagenomic datasets. 
 You could think of it as something akin to in-silico PCR, taking a pair of primer sequences 
-and returning a set of full-length inter-primer reads. A paper describing Kelpie has been submitted 
-to PeerJ and a citeable reference will appear here after publication. 
+and returning a set of full-length inter-primer reads. A paper describing Kelpie was published in PeerJ in
+early 2019 (https://peerj.com/articles/6174/).
+
+This initial release of Kelpie was superseded by Kelpie_v2 in September 2020. This new release has its own directory in the
+WorkingDogs repository.
 
 Kelpie is a command-line program and is usually run as follows:
 ```

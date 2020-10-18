@@ -1,6 +1,4 @@
-# Kelpie
-
-## Kelpie V2 (2.0.10)
+# Kelpie V2 (V2.0.11)
 
 Kelpie V2 is now available. This release adds one major feature to V1, and also improves overall efficiency and efficacy. 
 Substantial parts of the code are also now multi-threaded to improve performance. 
@@ -72,14 +70,32 @@ For example:
 
 `Kelpie_v2 -f CCHGAYATRGCHTTYCCHCG -r TCDGGRTGNCCRAARAAYCA PlatesGH_2003\Sample_PRO1747_PlateG_*_R?_val_?.fq PlatesGH_2003_BF3BR2_UF_strict.fa -unfiltered -strict -tmp C:\SeqTemp\K2 -kept I:\K2_kept`
 
-Kelpie v2 can be compiled using the steps described below, and binaries created using mono mkbundle are provided in this repository for various Linux and OSX versions.
+Kelpie v2 can be compiled using the steps described below, and binaries created using mono mkbundle are provided in this repository for various Linux and OSX versions. Small changes/fixes
+were also made to some of the WorkingDogsCoreLibrary files as part of Kelpie V2 development. (kMers.cs, kMerTables.cs, SeqFiles.cs, kMerCollections.cs). The revised versions of these files need 
+to be downloaded if you are going to compile Kelpie_V2 from source. _
 
-## Kelpie_v2.1 Preview
+### V2.0.10
+Kelpie V2.0.10 was the first public release of Kelpie V2. 
+
+### V2.0.11
+
+* Fixes a minor bug that could occur when total number of primer reads was < 100.
+* Changes what happens when the -primers option is used. This option used to just write out a file of primers found/used, but now also adds the primers associated 
+with each extended read to that read's header.
+* Completes the move from kMer 'pairs' to 'contexts'. Pairs and contexts are identical for long kMer <= 64b. Any seqeunce data between the starting and ending 
+kMers in a sequence were ignored with 'pairs', on the assumption that the hashed starting and ending kMers would be suficiently distinct and that any 
+collisions would be resolved at the next length. One rare corner case
+uncovered in testing showed that this assumption could cause problems, and fully-inclusive contexts were adopted as a result. 
+* Trailing runs of at leas 16 Gs are trimmed from reads, regardless of qual scores. Illumina produces runs of Gs as 'default' bases and one dataset had 
+such runs with good qual scores. Runs of GGs within reads are untouched, although high-G kMers could still be discarded by the low-complexity filter.
+* Trial extensions used to be processed in ACGT order. The highest depth variant is now tried first, and if it reaches a terminal proimer, its length
+is used to set a maximum length for the exploration of the other variants. 
+### Kelpie_v2.1 Preview
 
 The next planned Kelpie release will be v2.1. The only new feature planned for this release is directly supporting gzipped sequence data files. The Kelpie code will be 
 ported to .Net 5 for this release, and make use of its cross-platform code capability to generate Linux and OSX code files. This release should be available by the end of 2020. 
 
-## Kelpie v1 Notes 
+## Kelpie v1 Release Notes 
 Kelpie extracts/assembles full-length inter-primer sequences from WGS metagenomic datasets. 
 You could think of it as something akin to in-silico PCR, taking a pair of primer sequences 
 and returning a set of full-length inter-primer reads. A paper describing Kelpie has been published 

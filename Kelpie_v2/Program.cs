@@ -70,8 +70,8 @@ namespace Kelpie
     // ---------
     //
     // The inter-primer reads found in the previous stage are then turned into a set of 32-mers, and this is then denoised to remove error-like low coverage 
-    // kMers. The other longer kMers are then generated from the reads, their 32-mer ends are checked against the denoised 32-mer table, and sets of
-    // kMer 'pairs' is generated. Such kMer pairs are generated for each length from 32 to the read length, in steps of 4 bases. The kMer pairs are saved as hashes 
+    // kMers. The hashed longer kMers (contexts) are then generated from the reads, after their 32-mer ends are checked against the denoised 32-mer table. 
+    // Such kMer conttexts are generated for each length from 32 to the read length, in steps of 4 bases. The kMer pairs are saved as hashes 
     // of the 32-mers found at the start and end. This allows the use of fast binary hash tables.
     //
     // Each of the starting reads is checked, trimmed and then extended, one base at a time. At each iteration of the extension loop, the ending 32-mer for 
@@ -99,7 +99,7 @@ namespace Kelpie
 
     class Program
     {
-        const string version = "V2.0.10";
+        const string version = "V2.0.11";
 
         const bool cacheThings = true;
 
@@ -139,8 +139,8 @@ namespace Kelpie
         const uint endingRvs = 0xc0000000;
 
         const int kMerSize = 32;                // size of kMers used in filters
-        const int shortestPairSize = 40;        // shortest long kMer/kMer pair length
-        const int pairStride = 4;               // stride for pair lengths
+        const int shortestContextSize = 40;     // shortest long kMer/kMer context length
+        const int contextStride = 4;            // stride for (extension) context lengths
         const int maxRecursion = 20;            // limit depth of recursion during downstream tree exploration
         const int shortestCoreLength = 15;      // minimum size of a primer core
         const int degenerateHCL = 2;            // rhs part of primer that is not allowed to have variants - primer has to latch somewhere - used for degenerate primers only
@@ -148,7 +148,7 @@ namespace Kelpie
 
         const int shortestContextLength = 48;        // shortest allowed context length (and min length allowed for final starting reads)
         const int shortestOtherContextLength = 48;   // shortest allowed context from other reads
-        const int contextStride = 1;                 // context lengths increase by this length
+        const int filterContextStride = 1;      // filter context lengths increase by this length
 
         const int readsPerPartition = 5000000;  // WGS reads in each partition
         const int readsInBatch = 1000;          // how many reads are fetched in each ReadReads call
@@ -162,7 +162,7 @@ namespace Kelpie
         const int statsCachedResult = 6;        // starting read already extended
         const int statsCachedBranch = 7;        // cached branch encountered in tree exploration
         const int statsCostIdx = 8;             // alternative chosen on lowest cost
-        const int statsPairsIdx = 9;            // first pair-length index (for pair lengths used to decide between alternatives)
+        const int statsContextsIdx = 9;        // first context-length index in stats (for contexts used to decide between alternatives)
 
         static char[] bases = new char[] { 'A', 'C', 'G', 'T' };
 
@@ -171,8 +171,6 @@ namespace Kelpie
         static readonly int[] primerParts = { head, core };
 
         static bool chooseClosest = false;
-
-        //static StreamWriter endingPairs = new StreamWriter("endingPairs.txt");
 
         static void Main(string[] args)
         {
@@ -467,9 +465,9 @@ namespace Kelpie
                             Console.WriteLine("expected a maximum length after -max: " + args[p + 1]);
                             return;
                         }
-                        if (maxExtendedLength < shortestPairSize)
+                        if (maxExtendedLength < shortestContextSize)
                         {
-                            Console.WriteLine("max length must be >= " + shortestPairSize);
+                            Console.WriteLine("max length must be >= " + shortestContextSize);
                             return;
                         }
                         p++;
@@ -587,7 +585,7 @@ namespace Kelpie
 
             if (minLength > 0)
             {
-                int shortestAllowed = shortestPairSize + (forwardPrimer != null ? forwardPrimer.Length : 0) + (reversePrimer != null ? reversePrimer.Length : 0);
+                int shortestAllowed = shortestContextSize + (forwardPrimer != null ? forwardPrimer.Length : 0) + (reversePrimer != null ? reversePrimer.Length : 0);
                 if (minLength < shortestAllowed)
                 {
                     Console.WriteLine("min length must be >= " + shortestAllowed);
@@ -914,7 +912,7 @@ namespace Kelpie
                         keptFilesFound++;
                         StreamReader keptFile = new StreamReader(keptFN, Encoding.UTF8, false, 1000000);
                         int lastSloshIdx = keptFN.LastIndexOf(Path.DirectorySeparatorChar);
-                        string lastFNPart = keptFN.Substring(lastSloshIdx);
+                        string lastFNPart = keptFN.Substring(lastSloshIdx + 1);
                         string tempFN = tempDir + Path.DirectorySeparatorChar + lastFNPart;
                         StreamWriter tmpFile = new StreamWriter(tempFN, false, Encoding.UTF8, 1000000);
                         bool EOF = false;
@@ -1015,8 +1013,28 @@ namespace Kelpie
                                     quals.Length = 0;
                                 }
 
+                                // Poor Illumina data will have a trailing run of Gs - the default base - these should have poor qual scores but not always it would seem.
+                                // Cleanest just trim them away here
+                                if (read.Length >= kMerSize)
+                                {
+                                    ulong kMerAtEnd;
+                                    Sequence.CondenseMer(read, read.Length - kMerSize / 2, kMerSize / 2, out kMerAtEnd);
+                                    if (kMerAtEnd == 0xAAAAAAAA00000000)
+                                    {
+                                        int lastBaseIdx = read.Length - 1;
+                                        while (lastBaseIdx >= 0 && read.Bases[lastBaseIdx] == 'G')
+                                        {
+                                            read.Length--;
+                                            if (fileFormat == SeqFiles.formatFASTQ)
+                                                quals.Length--;
+                                            lastBaseIdx--;
+                                        }
+                                    }
+                                }
+
                                 if (maxAllowedReadLength > 0 && read.Length > maxAllowedReadLength)
                                     read.Length = maxAllowedReadLength;
+
                                 if (prefilteredReads)
                                 {
                                     headersToFilter[fip].Add(header.ToString());
@@ -1024,9 +1042,9 @@ namespace Kelpie
                                 }
                                 else
                                 {
-                                    //if (header.ToString() == "@D00534:185:CBU0KANXX:6:2206:20218:40812 1:N:0:CGGAATATT+AATATT")
+                                    //if (header.ToString() == "@A00204:412:HN3VHDSXX:4:1101:12843:22263 1:N:0:TGCGAAGT+AGGAACTC")
                                     //    Debugger.Break();
-                                    if (fileFormat == SeqFiles.formatFASTQ)
+                                    if (fileFormat == SeqFiles.formatFASTQ && minQual > 0)
                                         totalBasesTrimmed += SeqFiles.TrimTrailingPoorQuals(read, quals, minQual, qualOffset);
                                     WGSReads.WriteLine(header.Bases, 0, header.Length);
                                     WGSReads.WriteLine(read.Bases, 0, read.Length);
@@ -1209,7 +1227,7 @@ namespace Kelpie
             // The kMers in these tables are packed kMerLength strings (longer than minimum primer length)
             // This filter is then used for a final pass over all the reads - similar to FilterReads
             HashSet<ulong>[][] regionFilter = new HashSet<ulong>[fileStride][]; // [fip][dir]
-            // the set of 48-mer paired kMers that precede (and include the terminal primers). 
+            // the set of 48-mer hashed kMers that precede (and include the terminal primers). 
             // augmented as new starting-derived reads are found. Used to stop building the region filter when the starting and ending kMer clouds run into each other
             HashSet<ulong>[][] endingFilter = new HashSet<ulong>[fileStride][];
 
@@ -1229,18 +1247,18 @@ namespace Kelpie
             // of a kMer at a context length says that this length context exists and should be checked.
             // These data structures are common to both files in a pair to better find low abundance reads.
 
-            // kMerContexts are distinct (non-overlapping), and maintained that way by ExtendFilterSet.
+            // Filter kMerContexts are distinct (non-overlapping), and maintained that way by ExtendFilterSet.
             // contextExists - are contexts known to exist for a kMer at a given length? [dir][lengthIdx]
-            HashSet<ulong>[][] contextExists = new HashSet<ulong>[2][];
+            HashSet<ulong>[][] filterContextExists = new HashSet<ulong>[2][];
             // and the contexts themselves - hashed rest-of-reads, including the initial kMer
-            HashSet<ulong>[][] kMerContexts = new HashSet<ulong>[2][];
+            HashSet<ulong>[][] filterContexts = new HashSet<ulong>[2][];
             // kMer counts table used to detect and avoid likely error kMers
             Dictionary<ulong, int>[] kMerCounts = new Dictionary<ulong, int>[2];
 
             // what context lengths are we interested in? 
-            List<int> contextLengths = new List<int>(longestReadLength);
-            for (int cl = shortestContextLength; cl <= longestReadLength; cl += contextStride)
-                contextLengths.Add(cl);
+            List<int> filterContextLengths = new List<int>(longestReadLength);
+            for (int cl = shortestContextLength; cl <= longestReadLength; cl += filterContextStride)
+                filterContextLengths.Add(cl);
 
             foreach (int d in directions)
             {
@@ -1250,12 +1268,12 @@ namespace Kelpie
                     endingFilter[fip][d] = new HashSet<ulong>();
                 }
                 kMerCounts[d] = new Dictionary<ulong, int>();
-                contextExists[d] = new HashSet<ulong>[contextLengths.Count];
-                kMerContexts[d] = new HashSet<ulong>[contextLengths.Count];
-                for (int li = 0; li < contextLengths.Count; li++)
+                filterContextExists[d] = new HashSet<ulong>[filterContextLengths.Count];
+                filterContexts[d] = new HashSet<ulong>[filterContextLengths.Count];
+                for (int li = 0; li < filterContextLengths.Count; li++)
                 {
-                    contextExists[d][li] = new HashSet<ulong>();
-                    kMerContexts[d][li] = new HashSet<ulong>();
+                    filterContextExists[d][li] = new HashSet<ulong>();
+                    filterContexts[d][li] = new HashSet<ulong>();
                 }
             }
 
@@ -1277,7 +1295,7 @@ namespace Kelpie
             }
 
             int readsExpected = InitialiseIterativeFilters(startingPrimerReadsReads, endingPrimerReadsReads, forwardPrimer, reversePrimer, goodPrimers,
-                                                           regionFilter[0], endingFilter[0], contextLengths, contextExists, kMerContexts, kMerCounts, minDepth, matching);
+                                                           regionFilter[0], endingFilter[0], filterContextExists, filterContexts, kMerCounts, minDepth, matching);
 
             // regionsFilter & endingFilter start off the same for both files in a pair
             if (fileStride > 1)
@@ -1331,17 +1349,17 @@ namespace Kelpie
 
                     // find a new set of reads that start with kMers already in the region filter (overlapping reads)
                     if (prefilteredReads)
-                        FindMatchingReads(filterIterations, readsToFilter[fip], readsAlreadyTiled[fip][0], kMerSize, dropLowComplexity, regionFilter[fip], contextLengths, contextExists, kMerContexts, matchingReads, out droppedLowComplexityReads, out matchingReadsCount, threadsWanted);
+                        FindMatchingReads(filterIterations, readsToFilter[fip], readsAlreadyTiled[fip][0], kMerSize, dropLowComplexity, regionFilter[fip], filterContextLengths, filterContextExists, filterContexts, matchingReads, out droppedLowComplexityReads, out matchingReadsCount, threadsWanted);
                     else
-                        FindMatchingReads(filterIterations, readsInPartitions[fip], WGSReadsFNs[fip], readsAlreadyTiled[fip], kMerSize, dropLowComplexity, regionFilter[fip], contextLengths, contextExists, kMerContexts, matchingReads, out droppedLowComplexityReads, out matchingReadsCount, threadsWanted);
+                        FindMatchingReads(filterIterations, readsInPartitions[fip], WGSReadsFNs[fip], readsAlreadyTiled[fip], kMerSize, dropLowComplexity, regionFilter[fip], filterContextLengths, filterContextExists, filterContexts, matchingReads, out droppedLowComplexityReads, out matchingReadsCount, threadsWanted);
 
                     matchingReadsCount -= droppedLowComplexityReads;
                     totalMatchingReadsFound[fip] += matchingReadsCount;
 
                     // add these newly-found reads to the growing filter
-                    int readsAddingToFilter = ExtendFilterSet(matchingReads, regionFilter[fip], kMerSize, dropLowComplexity, endingFilter[fip], kMerCounts, minDepth, kMersFromSelectedReads, contextLengths, contextExists, kMerContexts, out endingReadsCount, endingReadsFound);
+                    int readsAddingToFilter = ExtendFilterSet(matchingReads, regionFilter[fip], kMerSize, dropLowComplexity, endingFilter[fip], kMerCounts, minDepth, kMersFromSelectedReads, filterContextLengths, filterContextExists, filterContexts, out endingReadsCount, endingReadsFound);
 
-                    Console.WriteLine((fip + 1) + "-" + filterIterations + ": matched " + readsAddingToFilter + "/" + matchingReadsCount + " reads (" + endingReadsCount + " ending).");
+                    Console.WriteLine((fip + 1) + "-" + filterIterations + ": matched " + readsAddingToFilter + "/" + matchingReadsCount + " reads (" + endingReadsCount + " ending)");
 
                     if (saveMatches)
                     {
@@ -1377,11 +1395,11 @@ namespace Kelpie
                     if (endingReadsCount > maxEndingReadsCount[fip])
                         maxEndingReadsCount[fip] = endingReadsCount;
                     // say we're into the ending regin when a substantial number of the informative newly found reads run into the ending cloud
-                    foundEndingRegion[fip] |= endingReadsCount > readsAddingToFilter / 3;
+                    foundEndingRegion[fip] |= endingReadsCount >= readsAddingToFilter / 3;
 
-                    if (readsAddingToFilter < readsExpected / 100)
+                    if (readsAddingToFilter <= readsExpected / 100)
                         rafNearZeroCount[fip]++;
-                    bool tinyEndCount = foundEndingRegion[fip] && endingReadsCount < maxEndingReadsCount[fip] / 200;
+                    bool tinyEndCount = foundEndingRegion[fip] && endingReadsCount <= maxEndingReadsCount[fip] / 200;
                     bool terReached = foundEndingRegion[fip] && totalEndingReadsFound[fip] > readsExpected && !VeryClose(totalEndingReadsFound[fip], readsExpected);
                     bool tooManyReads = foundEndingRegion[fip] && matchingReadsCount > readsExpected * 2;
                     bigDrop[fip] = (bigDrop[fip] && CloseOrLower(matchingReadsCount, previousMatchingReadsFound[fip])) || (matchingReadsCount < previousMatchingReadsFound[fip] / 2);
@@ -1423,8 +1441,9 @@ namespace Kelpie
             endingReadsFound = null;
             kMersFromSelectedReads = null;
             endingFilter = null;
-            contextExists = null;
-            kMerContexts = null;
+            filterContextExists = null;
+            filterContexts = null;
+            filterContextLengths = null;
             kMerCounts = null;
 
             // build final region filter used to find the reads that will go into phase 2
@@ -1575,17 +1594,19 @@ namespace Kelpie
             HashSet<int> readsStartingWithPrimer = new HashSet<int>();
             // the reads ending with a primer (F' or R')
             HashSet<int> readsEndingWithPrimer = new HashSet<int>();
+            // actual primers found at the starts of the starting reads
+            Dictionary<int, string> FPReadPrimers = new Dictionary<int, string>();
 
             // a canonical kMers table
             Dictionary<ulong, int> kMerTable = new Dictionary<ulong, int>(100000);
-            // save kMer pairs for a range of lengths. Shorter ones have a better chance of being found, but are less likely to be distinct
-            List<int> pairSizes = new List<int>();
-            Dictionary<int, Dictionary<ulong, int>> kMerPairs = new Dictionary<int, Dictionary<ulong, int>>();
+            // save kMer contexts for a quantised range of lengths. Shorter ones have a better chance of being found, but are less likely to be distinct.
+            List<int> contextLengths = new List<int>();
+            Dictionary<int, Dictionary<ulong, int>> kMerContexts = new Dictionary<int, Dictionary<ulong, int>>();
             // remember the start of forward primer reads so we can salvage reads that don't have complete primers at their start
             Dictionary<string, int> startsOfFPReads = new Dictionary<string, int>();
-            // kMer contexts from starting read only (lengths and pairs derived at that length)
-            // the usual pair-driven checking doesn't work very well at the start of the extending process because the starting reads are primer-trimmed and so fairly short.
-            // the quantisation of pairs also more impact for the same reason
+            // kMer contexts deerived from starting read only (lengths and hash derived at that length)
+            // the usual context checking doesn't work very well at the start of the extending process because the starting reads are primer-trimmed and so fairly short.
+            // the quantisation of context length also has more impact for the same reason
             Dictionary<int, HashSet<ulong>> startingContexts = new Dictionary<int, HashSet<ulong>>(longestReadLength);
 
             List<int> selectedPartitionStarts = new List<int>();
@@ -1595,8 +1616,9 @@ namespace Kelpie
             int longestSelectedRead;
             HashSet<int> nonACGTReads = new HashSet<int>();
 
-            // find the reads containg primers. Reads ending with FP' are reversed. Reads starting with FP are trimmed. The starts of the pre-trimmed FP reads are saved in startsOfFPReads.
-            ExtractPrimerReads(selectedHeaders, selectedReads, selectedPartitionStarts, selectedPartitionEnds, startingReadTrim, readsWithStartingPrimers, startsOfFPReads, nonStartingReads, readsStartingWithPrimer, readsEndingWithPrimer, out longestSelectedRead, threadsWanted);
+            // find the reads containg primers. Reads ending with FP' are reversed. Reads starting with FP are trimmed. The starts of the pre-trimmed FP reads are saved in startsOfFPReads. 
+            ExtractPrimerReads(selectedHeaders, selectedReads, selectedPartitionStarts, selectedPartitionEnds, startingReadTrim, forwardPrimer.Length,
+                               readsWithStartingPrimers, startsOfFPReads, FPReadPrimers, nonStartingReads, readsStartingWithPrimer, readsEndingWithPrimer, out longestSelectedRead, threadsWanted);
             // tile the filtered reads (both R1 and R2) and build the initial (noisy) kMerTable
             GenerateInitialkMerTable(selectedReads, selectedPartitionStarts, selectedPartitionEnds, kMerTable, nonACGTReads, threadsWanted);
             //Console.WriteLine("readsWithStartingPrimers="+readsWithStartingPrimers.Count+", nonStartingReads="+nonStartingReads.Count+ ", nonACGTReads="+ nonACGTReads.Count);
@@ -1610,66 +1632,63 @@ namespace Kelpie
             // fix up per-read stats now that denoise has finished (DN will have altered the kMer counts used to calculate the stats)
             RefreshStatsForSelectedReads(selectedReads, selectedPartitionStarts, selectedPartitionEnds, kMerTable, kMerSize, minDepth, statsForReads, threadsWanted);
 
-            // make pairs for  all possible lengths. 
-            for (int pl = shortestPairSize; pl < longestSelectedRead; pl += pairStride)
+            // make contexts for all possible lengths (in contextStride quanta). 
+            for (int pl = shortestContextSize; pl < longestSelectedRead; pl += contextStride)
             {
-                // initialise each pair length
-                if (!kMerPairs.ContainsKey(pl))
+                // initialise each context length
+                if (!kMerContexts.ContainsKey(pl))
                 {
-                    pairSizes.Add(pl);
-                    kMerPairs.Add(pl, new Dictionary<ulong, int>(kMersAfterCulling));
+                    contextLengths.Add(pl);
+                    kMerContexts.Add(pl, new Dictionary<ulong, int>(kMersAfterCulling));
                 }
             }
 
-            //ulong hashedPairTarget = HashPair(kMers.CondenseMer("GGGGGCTAGCGTTGTTCGGAATTACTGGGCGT", kMerSize),
-            //                                  kMers.CondenseMer("GCGTTGTTCGGAATTACTGGGCGTAAAGCGCG", kMerSize), kMerSize);
+            foreach (int pl in contextLengths)
+                GenerateContextTable(pl, selectedHeaders, selectedReads, selectedPartitionStarts, selectedPartitionEnds, nonACGTReads, kMerTable, statsForReads, kMerContexts, threadsWanted);
 
-            foreach (int pl in pairSizes)
-                GeneratePairTable(pl, selectedHeaders, selectedReads, selectedPartitionStarts, selectedPartitionEnds, nonACGTReads, kMerTable, statsForReads, kMerPairs, threadsWanted);
+            int totalContexts = 0;
+            foreach (int ps in contextLengths)
+                totalContexts += kMerContexts[ps].Count;
 
-            int totalPairs = 0;
-            foreach (int ps in pairSizes)
-                totalPairs += kMerPairs[ps].Count;
-
-            //if (generateStats)
-            //{
-            //    foreach (int ps in pairSizes)
-            //        Console.WriteLine(ps + ": " + kMerPairs[ps].Count);
-            //}
-
-            // trim pairs table to avoid low coverage at higher pair length. The longest pairs become increasingly noisy
-            // can can lead to good extensions being blocked unnecessarily. Reducing the maximum pair length makes this trimming
-            // somewhat redundant, but one of the test datasets has spike-in amplicons which resist this natural culling.
-            int firstPairCount = kMerPairs[pairSizes[0]].Count;
-            // dropped by 3/4 - time to stop
-            int pairCountThreshold = firstPairCount / 4;
-            int lastPairIdxUsed = 0;
-            for (int i = 0; i < kMerPairs.Count; i++)
+            if (generateStats)
             {
-                if (kMerPairs[pairSizes[i]].Count > pairCountThreshold)
-                    lastPairIdxUsed = i;
+                foreach (int ps in contextLengths)
+                    Console.WriteLine(ps + ": " + kMerContexts[ps].Count);
+            }
+
+            // trim contexts table to avoid low coverage at higher lengths. The longest contexts become increasingly noisy
+            // can can lead to good extensions being blocked unnecessarily. Reducing the maximum context length makes this trimming
+            // somewhat redundant, but one of the test datasets has spike-in amplicons which resist this natural culling.
+            int firstContextCount = kMerContexts[contextLengths[0]].Count;
+            // dropped by 3/4 - time to stop
+            int contextCountThreshold = firstContextCount / 4;
+            int lastContextIdxUsed = 0;
+            for (int i = 0; i < kMerContexts.Count; i++)
+            {
+                if (kMerContexts[contextLengths[i]].Count > contextCountThreshold)
+                    lastContextIdxUsed = i;
                 else
                     break;
             }
-            // remove the not-to-be-used pair tables
-            int initialPairsSizesCount = pairSizes.Count;
-            int pairTablesWanted = lastPairIdxUsed + 1;
-            if (pairTablesWanted != initialPairsSizesCount)
+            // remove the not-to-be-used context tables
+            int initialContextLengthsCount = contextLengths.Count;
+            int contextTablesWanted = lastContextIdxUsed + 1;
+            if (contextTablesWanted != initialContextLengthsCount)
             {
-                for (int i = pairTablesWanted; i < initialPairsSizesCount; i++)
-                    kMerPairs.Remove(pairSizes[i]);
-                pairSizes.RemoveRange(pairTablesWanted, initialPairsSizesCount - pairTablesWanted);
+                for (int i = contextTablesWanted; i < initialContextLengthsCount; i++)
+                    kMerContexts.Remove(contextLengths[i]);
+                contextLengths.RemoveRange(contextTablesWanted, initialContextLengthsCount - contextTablesWanted);
             }
 
-            // stats on pairSize usage during extension phase
-            int[] pairSizeStats = new int[kMerPairs.Count + statsPairsIdx];
+            // stats on context length usage during extension phase
+            int[] contextLengthStats = new int[kMerContexts.Count + statsContextsIdx];
 
             Console.WriteLine("finished building kMer tables: " + (kMerTable.Count - kMersCulled) + " " + kMerSize + "-mers; " +
-                               totalPairs + " kMer pairs over " + kMerPairs.Count + "/" + initialPairsSizesCount + " pair lengths");
+                               totalContexts + " kMer contexts over " + kMerContexts.Count + "/" + initialContextLengthsCount + " context lengths");
 
             // build final set of starting reads - after cleaning, trimming, extending, dropping
             List<int> finalStartingReads = new List<int>();
-            int minReadLength = shortestPairSize;
+            int minReadLength = shortestContextSize;
 
             int uncleanStartingReads = 0;
             int cleanStartingReads = 0;
@@ -1678,7 +1697,7 @@ namespace Kelpie
             int stillShortStartingReads = 0;
 
             GenerateFinalStartingReads(readsWithStartingPrimers, selectedHeaders, selectedReads, statsForReads, finalStartingReads, minReadLength,
-                                       kMerSize, minDepth, kMerTable, pairSizes, kMerPairs,
+                                       kMerSize, minDepth, kMerTable, contextLengths, kMerContexts,
                                        out cleanStartingReads, out shortStartingReads, out extendedShortStartingReads, out stillShortStartingReads, out uncleanStartingReads, log, threadsWanted);
 
             Console.WriteLine("cleaned " + cleanStartingReads + "/" + readsWithStartingPrimers.Count + " starting reads; " + uncleanStartingReads + " uncleansed starting reads");
@@ -1711,7 +1730,7 @@ namespace Kelpie
                     continue;
 
                 // see if the start of the read is in our partial primers set
-                string startFragment = read.Substring(0, shortestPairSize);
+                string startFragment = read.Substring(0, shortestContextSize);
                 if (startsOfFPReads.ContainsKey(startFragment))
                 {
                     selectedReads[r] = read.Substring(startingReadTrim - startsOfFPReads[startFragment]);
@@ -1719,7 +1738,7 @@ namespace Kelpie
                     continue;
                 }
                 // try the end of the read in case it overlaps with FP'
-                startFragment = kMers.ReverseComplement(read.Substring(read.Length - shortestPairSize, shortestPairSize));
+                startFragment = kMers.ReverseComplement(read.Substring(read.Length - shortestContextSize, shortestContextSize));
                 if (startsOfFPReads.ContainsKey(startFragment))
                 {
                     read = kMers.ReverseComplement(read);
@@ -1738,14 +1757,14 @@ namespace Kelpie
 
             foreach (int r in possibleAdditionalStartingReads)
             {
-                //if (r == 1825527)
+                //if (r == 74311)
                 //    Debugger.Break();
 
                 string additionalStartingRead = selectedReads[r];
                 Sequence additionalStartingReadSeq = new Sequence(additionalStartingRead);
-                bool cleanRead = CleanTrimStartingRead(kMerSize, kMerTable, pairSizes, kMerPairs, additionalStartingReadSeq, minDepth, statsForReads[r], r, log);
+                bool cleanRead = CleanTrimStartingRead(kMerSize, kMerTable, contextLengths, kMerContexts, additionalStartingReadSeq, minDepth, statsForReads[r], r, log);
 
-                //if (additionalStartingRead.ToString() == "TTAGCAGCAAACATTGCCCACAGAGGATCTTCTGTAGATTTAGCTATTTTTAGTCTCCATTTAGCAGGAATTCCATCAATTTTAGGCGCTGTAAATTTCA")
+                //if (additionalStartingRead.ToString() == "GCCGCGGTAATACGGAGGGGGCTAGCGTTGTTCGGAATTACTGGGCGTAAAGCGCGCGTAGGaGGATTGGAAAGTTGGGGGTGAAATCCCGGGGCTCAACCCCGGAACTGCCTCCAAAACTATCAGTCTGGAGTTCGAGAGAGGTGAG")
                 //    Debugger.Break();
 
                 if (cleanRead)
@@ -1754,12 +1773,12 @@ namespace Kelpie
                     if (log != null)
                         shortRead = additionalStartingRead;
 
-                    if (additionalStartingRead.Length < shortestPairSize)
+                    if (additionalStartingRead.Length < shortestContextSize)
                     {
                         shortStartingReads++;
 
                         // try extending the read
-                        bool extendedOK = ExtendShortStartingRead(additionalStartingReadSeq, kMerTable, kMerSize, shortestPairSize, pairSizes, kMerPairs, statsForReads[r], log);
+                        bool extendedOK = ExtendShortStartingRead(additionalStartingReadSeq, kMerTable, kMerSize, shortestContextSize, contextLengths, kMerContexts, statsForReads[r], log);
 
                         if (extendedOK)
                         {
@@ -1769,7 +1788,7 @@ namespace Kelpie
                         }
                     }
                     // read long enough, so add it to the starting set
-                    if (additionalStartingReadSeq.Length >= shortestPairSize)
+                    if (additionalStartingReadSeq.Length >= shortestContextSize)
                     {
                         selectedReads[r] = additionalStartingReadSeq.ToString();
                         finalStartingReads.Add(r);
@@ -1784,31 +1803,38 @@ namespace Kelpie
 
             // start from a set of starting reads and incrementally grow them from the available kMers until they can be grown no further
             // --------------------------------------------------------------------------------------------------------------------------
-            Dictionary<string, int> extendedReadsSet = ExtendFromStartingReads(selectedReads, finalStartingReads, minReadLength, maxExtendedLength, longestReadLength, statsForReads, kMerSize, kMerTable, startingContexts, pairSizes, kMerPairs, pairSizeStats, extensionTerminatingPrimers,
-                                                                                 fwdPrimerHeadLength, rvsPrimerHeadLength, primerCoreLength, log);
+            Dictionary<int, string> extendedStartingReads = ExtendFromStartingReads(selectedReads, finalStartingReads, minReadLength, maxExtendedLength, longestReadLength, statsForReads, kMerSize, kMerTable, startingContexts, contextLengths, kMerContexts, contextLengthStats, extensionTerminatingPrimers,
+                                                                                    fwdPrimerHeadLength, rvsPrimerHeadLength, primerCoreLength, log);
 
             // now have a set of final extended reads - almost ready for writing
             // -----------------------------------------------------------------
+
             // but first trim away the starting and terminating primers (and discard any reads that are too short or too long)
             Dictionary<string, int> discards = new Dictionary<string, int>();
-            Dictionary<string, int> trimmedExtendedReads = TrimExtendedReads(extendedReadsSet, fwdPrimerHeadLength, rvsPrimerHeadLength, primerCoreLength, reversePrimersRC, minLength, maxExtendedLength, "F-->R", discards, log);
+            Dictionary<int, string> trimmedExtendedReads = new Dictionary<int, string>(finalStartingReads.Count);
+            Dictionary<int, string> TPsFound = new Dictionary<int, string>(finalStartingReads.Count);
+
+            int fullyExtendedCount = TrimExtendedReads(extendedStartingReads, fwdPrimerHeadLength, rvsPrimerHeadLength, primerCoreLength, reversePrimersRC, minLength, maxExtendedLength, trimmedExtendedReads, TPsFound, discards, log);
 
             // and write out all the extended reads
             // ------------------------------------
             StreamWriter extendedReads = new StreamWriter(extendedReadsFN);
 
-            int readNo = 1;
-            foreach (KeyValuePair<string, int> kvp in trimmedExtendedReads)
+            foreach (KeyValuePair<int, string> kvp in trimmedExtendedReads)
             {
-                string extendedRead = kvp.Key;
-                int count = kvp.Value;
-                for (int r = 0; r < count; r++)
+                int r = kvp.Key;
+                string extendedRead = kvp.Value;
+
+                string primersInRead = "";
+                if (savePrimers)
                 {
-                    SeqFiles.WriteRead(extendedReads, (">R" + readNo), extendedRead, SeqFiles.formatFNA);
-                    readNo++;
+                    string FP = FPReadPrimers.ContainsKey(r) ? FPReadPrimers[r] : "partialPrimer";
+                    string TP = TPsFound[r];
+                    primersInRead = ";FP=" + FP + ";TP=" + TP;
                 }
+
+                SeqFiles.WriteRead(extendedReads, (">R" + r + primersInRead), extendedRead, SeqFiles.formatFNA); ;
             }
-            int fullyExtendedReads = readNo - 1;
 
             int droppedReads = 0;
             int lastDotIdx = extendedReadsFN.LastIndexOf('.');
@@ -1820,13 +1846,14 @@ namespace Kelpie
                 discardsFN = prefix + "_discards" + suffix;
             }
             StreamWriter discardedReads = new StreamWriter(discardsFN);
+            int discardedNo = 1;
             foreach (KeyValuePair<string, int> kvp in discards)
             {
                 string discardedExtendedRead = kvp.Key;
                 int discardedExtendedCount = kvp.Value;
-                SeqFiles.WriteRead(discardedReads, (">D" + readNo + ";size=" + discardedExtendedCount), discardedExtendedRead, SeqFiles.formatFNA);
+                SeqFiles.WriteRead(discardedReads, (">D" + discardedNo + ";size=" + discardedExtendedCount), discardedExtendedRead, SeqFiles.formatFNA);
                 droppedReads += discardedExtendedCount;
-                readNo++;
+                discardedNo++;
             }
             Console.WriteLine("dropped " + droppedReads + " reads (too short after extension or no terminal primer found)");
 
@@ -1847,29 +1874,29 @@ namespace Kelpie
                 ampliconRange = minLengthBit + middleBit + maxLengthBit;
             }
 
-            Console.WriteLine("extracted, extended & wrote " + fullyExtendedReads + " F->R reads (" + ampliconRange + ") to " + extendedReadsFN +
+            Console.WriteLine("extracted, extended & wrote " + trimmedExtendedReads.Count + " F->R reads (" + ampliconRange + ") to " + extendedReadsFN +
                               " in " + totalElapsedTime.Elapsed.TotalSeconds.ToString("F1") + "s. (" + phase1ElapsedTime.Elapsed.TotalSeconds.ToString("F1") + "s+" + phase2ElapsedTime.Elapsed.TotalSeconds.ToString("F1") + "s)");
 
             if (generateStats)
             {
-                Console.WriteLine("read extensions:\t" + pairSizeStats[statsNextIdx]);
-                Console.WriteLine("read cached:\t" + pairSizeStats[statsCachedResult]);
-                Console.WriteLine("branch cached:\t" + pairSizeStats[statsCachedBranch]);
-                Console.WriteLine("single next kMer:\t" + pairSizeStats[statsSingleIdx]);
-                Console.WriteLine("looked downstream:\t" + pairSizeStats[statsDownstreamIdx]);
-                Console.WriteLine("single good downstream:\t" + pairSizeStats[statsSingleDSTIdx]);
-                Console.WriteLine("chose by lowest cost:\t" + pairSizeStats[statsCostIdx]);
-                Console.WriteLine("chose in proportion by depth:\t" + pairSizeStats[statsRolledIdx]);
-                Console.WriteLine("chose longest downstream:\t" + pairSizeStats[statsLongestIdx]);
-                for (int pl = 0; pl < kMerPairs.Count; pl++)
-                    Console.WriteLine("single choice at length " + pairSizes[pl] + ":\t" + pairSizeStats[statsPairsIdx + pl]);
+                Console.WriteLine("read extensions:\t" + contextLengthStats[statsNextIdx]);
+                Console.WriteLine("read cached:\t" + contextLengthStats[statsCachedResult]);
+                Console.WriteLine("branch cached:\t" + contextLengthStats[statsCachedBranch]);
+                Console.WriteLine("single next kMer:\t" + contextLengthStats[statsSingleIdx]);
+                Console.WriteLine("looked downstream:\t" + contextLengthStats[statsDownstreamIdx]);
+                Console.WriteLine("single good downstream:\t" + contextLengthStats[statsSingleDSTIdx]);
+                Console.WriteLine("chose by lowest cost:\t" + contextLengthStats[statsCostIdx]);
+                Console.WriteLine("chose in proportion by depth:\t" + contextLengthStats[statsRolledIdx]);
+                Console.WriteLine("chose longest downstream:\t" + contextLengthStats[statsLongestIdx]);
+                for (int pl = 0; pl < kMerContexts.Count; pl++)
+                    Console.WriteLine("single choice at length " + contextLengths[pl] + ":\t" + contextLengthStats[statsContextsIdx + pl]);
             }
 
             //Console.ReadLine();
         }
 
         private static int InitialiseIterativeFilters(List<string>[][] startingPrimerReadsReads, List<string>[][] endingPrimerReadsReads, string forwardPrimer, string reversePrimer, HashSet<string>[] goodPrimers,
-                                                       HashSet<ulong>[] regionFilter, HashSet<ulong>[] endingFilter, List<int> contextLengths, HashSet<ulong>[][] contextExists, HashSet<ulong>[][] kMerContexts,
+                                                       HashSet<ulong>[] regionFilter, HashSet<ulong>[] endingFilter, HashSet<ulong>[][] filterContextExists, HashSet<ulong>[][] filterContexts,
                                                        Dictionary<ulong, int>[] kMerCounts, int minDepth, StreamWriter[] matching)
         {
             int fileStride = startingPrimerReadsReads.Length;
@@ -1913,11 +1940,11 @@ namespace Kelpie
                 // tile the extracted/trimmed primer-containing reads to the region filter
                 int[] kMersAddedToRegionFilter = new int[2];
                 // F and (F') for the initial region filter (fwd)
-                kMersAddedToRegionFilter[fwd] += InitialiseRegionFilter(preppedStartingReads[fwd], regionFilter[fwd], contextExists[fwd], kMerContexts[fwd], kMerSize, forwardPrimer.Length, kMerCounts[fwd], minDepth);      // F
-                kMersAddedToRegionFilter[fwd] += InitialiseRegionFilter(preppedEndingingReads[rvs], regionFilter[fwd], contextExists[fwd], kMerContexts[fwd], kMerSize, forwardPrimer.Length, kMerCounts[fwd], minDepth);     // (F')
+                kMersAddedToRegionFilter[fwd] += InitialiseRegionFilter(preppedStartingReads[fwd], regionFilter[fwd], filterContextExists[fwd], filterContexts[fwd], kMerSize, forwardPrimer.Length, kMerCounts[fwd], minDepth);      // F
+                kMersAddedToRegionFilter[fwd] += InitialiseRegionFilter(preppedEndingingReads[rvs], regionFilter[fwd], filterContextExists[fwd], filterContexts[fwd], kMerSize, forwardPrimer.Length, kMerCounts[fwd], minDepth);     // (F')
                 // R and (R') for the initial region filter (rvs)
-                kMersAddedToRegionFilter[rvs] += InitialiseRegionFilter(preppedStartingReads[rvs], regionFilter[rvs], contextExists[rvs], kMerContexts[rvs], kMerSize, reversePrimer.Length, kMerCounts[rvs], minDepth);      // R
-                kMersAddedToRegionFilter[rvs] += InitialiseRegionFilter(preppedEndingingReads[fwd], regionFilter[rvs], contextExists[rvs], kMerContexts[rvs], kMerSize, reversePrimer.Length, kMerCounts[rvs], minDepth);     // (R')
+                kMersAddedToRegionFilter[rvs] += InitialiseRegionFilter(preppedStartingReads[rvs], regionFilter[rvs], filterContextExists[rvs], filterContexts[rvs], kMerSize, reversePrimer.Length, kMerCounts[rvs], minDepth);      // R
+                kMersAddedToRegionFilter[rvs] += InitialiseRegionFilter(preppedEndingingReads[fwd], regionFilter[rvs], filterContextExists[rvs], filterContexts[rvs], kMerSize, reversePrimer.Length, kMerCounts[rvs], minDepth);     // (R')
 
                 // count the kMers in the ending reads
                 CountMersInReads(preppedEndingingReads[fwd], kMerSize, ScanOpts.RC, endingReadsMerCounts[fwd]);              // (R') 
@@ -2586,7 +2613,7 @@ namespace Kelpie
             }
         }
 
-        private static int InitialiseRegionFilter(List<string> reads, HashSet<ulong> regionFilter, HashSet<ulong>[] contextExists, HashSet<ulong>[] kMerContexts, int kMerSize, int primerLength, Dictionary<ulong, int> kMerCounts, int minDepth)
+        private static int InitialiseRegionFilter(List<string> reads, HashSet<ulong> regionFilter, HashSet<ulong>[] filterContextExists, HashSet<ulong>[] filterContexts, int kMerSize, int primerLength, Dictionary<ulong, int> kMerCounts, int minDepth)
         {
             ulong[] kMersInRead = new ulong[1000];
             bool[] kMersValid = new bool[1000];
@@ -2629,8 +2656,8 @@ namespace Kelpie
                     if (kMerHasContext)
                     {
                         regionFilter.Add(kMer);
-                        contextExists[lengthIdx].Add(kMer);
-                        kMerContexts[lengthIdx].Add(context);
+                        filterContextExists[lengthIdx].Add(kMer);
+                        filterContexts[lengthIdx].Add(context);
                     }
                 }
             } //  pass through the reads
@@ -2726,7 +2753,7 @@ namespace Kelpie
             int[] readsAddingToFilter = new int[2];
             List<List<ulong>>[] pairsFromReads = new List<List<ulong>>[2];
 
-            int droppedReads = 0;
+            //int droppedReads = 0;
             // sorted distinct selected reads(overlapped reads dropped), with counts of reads subsumed into each distinct read
             List<string>[] distinctReads = new List<string>[2];
             List<int>[] distinctReadsCounts = new List<int>[2];
@@ -2764,66 +2791,59 @@ namespace Kelpie
                     //if (read == "AATTTTGCAGCTCAACTGTAAAAGTGCCTTCGATACTGGCTTTCTTGAGTGTGGATGAAGTAGGCGGAATTTGTGGTGTAGCGGTGAAATGCTTAGATATC")
                     //    Debugger.Break();
 
-                    if (dropLowComplexity && CheckReadForLowComplexity(read, ref kMersInRead, ref kMersValid, distinctFragments))
-                    {
-                        droppedReads++;
-                    }
-                    else
-                    {
-                        int kMerCount = GetDepthsForFilterRead(read, 0, kMerCounts[d], kMerCounts[otherDirection], kMerSize, false, ref kMersInRead, ref kMersValid, ref kMerDepthsInRead);
-                        int lastIdx = kMerCount - (shortestOtherContextLength - kMerSize);
+                    int kMerCount = GetDepthsForFilterRead(read, 0, kMerCounts[d], kMerCounts[otherDirection], kMerSize, false, ref kMersInRead, ref kMersValid, ref kMerDepthsInRead);
+                    int lastIdx = kMerCount - (shortestOtherContextLength - kMerSize);
 
-                        // tile for kMers starting anywhere in the read (as long as there's room for at least one context)
-                        for (int i = 0; i < lastIdx; i++)
+                    // tile for kMers starting anywhere in the read (as long as there's room for at least one context)
+                    for (int i = 0; i < lastIdx; i++)
+                    {
+                        if (kMerDepthsInRead[i] < minDepth)
+                            continue;
+
+                        // get next kMer tiled from this read
+                        ulong kMer = kMersInRead[i];
+
+                        //if (kMer == 0x20AAB0C34037CCF3)
+                        //    Debugger.Break();
+
+                        // if we haven't see it before, remember to add it to the filter set later (unless we find we've finished extending already)
+                        if (!regionFilter[d].Contains(kMer))
                         {
-                            if (kMerDepthsInRead[i] < minDepth / 10)
-                                continue;
+                            kMersFromSelectedReads[d].Add(kMer);
 
-                            // get next kMer tiled from this read
-                            ulong kMer = kMersInRead[i];
+                            // first kMer from this read...
+                            if (!readAddedToFilter)
+                            {
+                                readAddedToFilter = true;
+                                readsAddingToFilter[d] += count;
+                            }
+                        }
 
-                            //if (kMer == 0x20AAB0C34037CCF3)
+                        int adjacentIdx = i + kMerSize / 2;
+                        if (adjacentIdx < kMerCount && kMerDepthsInRead[adjacentIdx] >= minDepth)
+                        {
+                            ulong adjacentMer = kMersInRead[adjacentIdx];
+                            ulong endingPair = kMers.ReverseComplement(kMer, kMerSize) ^ kMers.ReverseComplement(adjacentMer, kMerSize);
+                            endingFilter[otherDirection].Add(endingPair);
+                            //if (endingPair == 13921541134680753632)
                             //    Debugger.Break();
+                            pairsFromReads[d][r].Add(kMer ^ adjacentMer);
+                            //if ((kMer ^ adjacentMer) == 13921541134680753632)
+                            //    Debugger.Break();
+                        }
 
-                            // if we haven't see it before, remember to add it to the filter set later (unless we find we've finished extending already)
-                            if (!regionFilter[d].Contains(kMer))
-                            {
-                                kMersFromSelectedReads[d].Add(kMer);
-
-                                // first kMer from this read...
-                                if (!readAddedToFilter)
-                                {
-                                    readAddedToFilter = true;
-                                    readsAddingToFilter[d] += count;
-                                }
-                            }
-
-                            int adjacentIdx = i + kMerSize / 2;
-                            if (adjacentIdx < kMerCount && kMerDepthsInRead[adjacentIdx] >= minDepth)
-                            {
-                                ulong adjacentMer = kMersInRead[adjacentIdx];
-                                ulong endingPair = kMers.ReverseComplement(kMer, kMerSize) ^ kMers.ReverseComplement(adjacentMer, kMerSize);
-                                endingFilter[otherDirection].Add(endingPair);
-                                //if (endingPair == 13921541134680753632)
-                                //    Debugger.Break();
-                                pairsFromReads[d][r].Add(kMer ^ adjacentMer);
-                                //if ((kMer ^ adjacentMer) == 13921541134680753632)
-                                //    Debugger.Break();
-                            }
-
-                            int contextLengthIdx;
-                            ulong context;
-                            bool kMerHasContext = GenerateLongestContext(kMersInRead, kMerCount, kMerSize, i, shortestOtherContextLength, shortestContextLength, out contextLengthIdx, out context);
-                            //if (kMer == 0x4f0fa038503f30ec)
-                            //    Console.WriteLine(r + ":km@" + i + "(+" + (lengthIdx * contextStride) + ") 0x" + kMer.ToString("x16") + "-->0x" + context.ToString("x16") + " " + read.Substring(i, kMerSize + lengthIdx * contextStride));
-                            //if (context == 0x96b038991f2ffd21)
-                            //    Console.WriteLine(r + ":tc@" + i + "(+" + (lengthIdx * contextStride) + ") 0x" + kMer.ToString("x16") + "-->0x" + context.ToString("x16") + " " + read.Substring(i, kMerSize + lengthIdx * contextStride));
-                            if (kMerHasContext)
-                            {
-                                contextExists[d][contextLengthIdx].Add(kMer);
-                                kMerContexts[d][contextLengthIdx].Add(context);
-                                RemoveShorterContexts(kMersInRead, kMerSize, i, contextLengthIdx, contextLengths, contextExists[d], kMerContexts[d]);
-                            }
+                        int contextLengthIdx;
+                        ulong context;
+                        bool kMerHasContext = GenerateLongestContext(kMersInRead, kMerCount, kMerSize, i, shortestOtherContextLength, shortestContextLength, out contextLengthIdx, out context);
+                        //if (kMer == 0x4f0fa038503f30ec)
+                        //    Console.WriteLine(r + ":km@" + i + "(+" + (lengthIdx * contextStride) + ") 0x" + kMer.ToString("x16") + "-->0x" + context.ToString("x16") + " " + read.Substring(i, kMerSize + lengthIdx * contextStride));
+                        //if (context == 0x96b038991f2ffd21)
+                        //    Console.WriteLine(r + ":tc@" + i + "(+" + (lengthIdx * contextStride) + ") 0x" + kMer.ToString("x16") + "-->0x" + context.ToString("x16") + " " + read.Substring(i, kMerSize + lengthIdx * contextStride));
+                        if (kMerHasContext)
+                        {
+                            contextExists[d][contextLengthIdx].Add(kMer);
+                            kMerContexts[d][contextLengthIdx].Add(context);
+                            RemoveShorterContexts(kMersInRead, kMerSize, i, contextLengthIdx, contextLengths, contextExists[d], kMerContexts[d]);
                         }
                     }
                 } // for each selected read
@@ -2873,7 +2893,7 @@ namespace Kelpie
         private static bool GenerateLongestContext(ulong[] kMersInRead, int kMerCount, int kMerSize, int kMerIdx, int smallestLength, int minLength, out int lengthIdx, out ulong context)
         {
             int kMersLeft = kMerCount - kMerIdx;                                          // kMers in the remainder of the read
-            int ignoredBases = kMersLeft - (kMersLeft / contextStride * contextStride);   // how many bases are ignored at the end of the read due to striding
+            int ignoredBases = kMersLeft - (kMersLeft / filterContextStride * filterContextStride);   // how many bases are ignored at the end of the read due to striding
             int finalIdx = kMerCount - 1 - ignoredBases;                                  // index of last kMer in the context
             int contextLength = (finalIdx - kMerIdx) + kMerSize;                          // how long would this context be?
 
@@ -2884,7 +2904,7 @@ namespace Kelpie
                 return false;
             }
 
-            lengthIdx = (contextLength - smallestLength) / contextStride;
+            lengthIdx = (contextLength - smallestLength) / filterContextStride;
 
             context = kMersInRead[kMerIdx] ^ kMersInRead[finalIdx];
             for (int m = kMerIdx + kMerSize; m < finalIdx; m += kMerSize)   // add any in-between kMers to the hash
@@ -3474,7 +3494,7 @@ namespace Kelpie
                     sharedDroppedLowComplexityReads += localDroppedLowComplexityReads;
                     sharedTotalMatchedReads += localTotalMatchedReads;
                 }
-            //}
+                //}
             });
 
             droppedLowComplexityReads = sharedDroppedLowComplexityReads;
@@ -3529,9 +3549,53 @@ namespace Kelpie
             return kMer;
         }
 
-        private static ulong HashPair(ulong kMer1, ulong kMer2, int kMerSize)
+        //private static ulong HashPair(ulong kMer1, ulong kMer2, int kMerSize)
+        //{
+        //    return Canonical(Canonical(kMer1, kMerSize) ^ Canonical(kMer2, kMerSize), kMerSize);
+        //}
+
+        // generate a hashed canonical long kMer (context). Context must always fit within the read.. Starts with a set of kMers tiled from a read.
+        // called only when initially loading context tables
+        private static ulong HashContext(ulong[] kMersInRead, int kMerSize, int initialIdx, int wantedLength)
         {
-            return Canonical(Canonical(kMer1, kMerSize) ^ Canonical(kMer2, kMerSize), kMerSize);
+            int finalIdx = initialIdx + wantedLength - kMerSize;
+            ulong context = kMersInRead[initialIdx] ^ kMersInRead[finalIdx];
+            for (int m = initialIdx + kMerSize; m < finalIdx; m += kMerSize)   // add any in-between kMers to the hash
+                context ^= kMersInRead[m];
+
+            return context;
+        }
+
+        // generate a hashed canonical long kMer (context). Context must always fit within the read.. Starts with a read and the start of the context within it..
+        private static ulong HashContext(Sequence seq, int kMerSize, int m, int wantedLength)
+        {
+            Sequence.CondenseMer(seq, m, kMerSize, out ulong initialMer);
+            int finalM = m + wantedLength - kMerSize;
+            Sequence.CondenseMer(seq, finalM, kMerSize, out ulong finalMer);
+
+            ulong context = initialMer ^ finalMer;
+            for (int nm = m + kMerSize; nm < finalM; nm += kMerSize)   // add any in-between kMers to the hash
+            {
+                Sequence.CondenseMer(seq, nm, kMerSize, out ulong nextMer);
+                context ^= nextMer;
+            }
+
+            return context;
+        }
+
+        private static ulong HashContextVariant(Sequence seq, int kMerSize, int m, int wantedLength, ulong kMerVariant)
+        {
+            Sequence.CondenseMer(seq, m, kMerSize, out ulong initialMer);
+            int finalM = m + wantedLength - kMerSize;
+
+            ulong context = initialMer ^ kMerVariant;
+            for (int nm = m + kMerSize; nm < finalM; nm += kMerSize)   // add any in-between kMers to the hash
+            {
+                Sequence.CondenseMer(seq, nm, kMerSize, out ulong nextMer);
+                context ^= nextMer;
+            }
+
+            return context;
         }
 
         // Tries to remove unreliable (error) kMers from the kMer table. 
@@ -3575,14 +3639,14 @@ namespace Kelpie
                     string read = selectedReads[r];
                     bool readCopiedToSeq = false;
 
-                    //if (r == 220574)
+                    //if (r == 19067)
                     //    Debugger.Break();
 
-                    //if (read == "CTGTAGTTGAGCTACTGCCTTTTAACCTCGACTTAACTAGCCGCCTACGCACCCTTTACGCCCAGTAATTCCGGATAACGCTTGCCCCCTACGTATTACCGCGGCTGCTGGCAC")
+                    //if (read == "TTTGCTCCCCACACTTTCGCACCTCAGCGTCAGTATCGAGCCAGTGAGCCGCCTTCGCCACTGGTGTTTCTGCGAATATCTACGAATTTCACCTCTACACTCGCAATTCCACTCACCTCTCTCGAACTCCAGACTGATAGTTAGTGAGGC")
                     //    Debugger.Break();
 
                     // never redeem from short reads - too unreliable - must be long enough to recover from errors in first kMer
-                    bool readTooShort = read.Length < 5 * kMerSize / 2;
+                    bool readTooShort = read.Length < shortestContextLength;
 
                     // get the set of kMers from this read
                     int maxDepthFound;
@@ -3831,16 +3895,26 @@ namespace Kelpie
                                     //List<int> matchesAt = new List<int>();
                                     //List<ulong> matchesFound = new List<ulong>();
 
+                                    int bestFollowers = 0;
+
                                     bool currentAbandoned;
                                     int kMerFollowers = CountFollowingMatches(seq, m, kMerCount, minDepthForRead, kMer, kMerSize, kMerTable, 0, 0, out currentAbandoned/*, matchesAt, matchesFound*/);
-                                    if (currentAbandoned)
-                                        kMerFollowers = 0;
-                                    bool deepestAbandoned; 
-                                    int deepestFollowers = CountFollowingMatches(seq, m, kMerCount, minDepthForRead, deepestVariant, kMerSize, kMerTable, 0, 0, out deepestAbandoned/*, matchesAt, matchesFound*/);
-                                    if (deepestAbandoned)
-                                        deepestFollowers = 0;
+                                    if (kMerFollowers > bestFollowers)
+                                        bestFollowers = kMerFollowers;
+                                    //if (currentAbandoned)
+                                    //    kMerFollowers = 0;
 
-                                    statusQuoFollowers = !currentAbandoned && kMerFollowers > deepestFollowers;
+                                    bool deepestAbandoned;
+                                    int deepestFollowers = CountFollowingMatches(seq, m, kMerCount, minDepthForRead, deepestVariant, kMerSize, kMerTable, 0, 0, out deepestAbandoned/*, matchesAt, matchesFound*/);
+                                    if (deepestFollowers > bestFollowers)
+                                        bestFollowers = deepestFollowers;
+                                    //if (deepestAbandoned)
+                                    //    deepestFollowers = 0;
+
+                                    //statusQuoFollowers = !currentAbandoned && kMerFollowers > deepestFollowers;
+                                    int bestPossibleFollowers = kMerCount - m;
+                                    statusQuoFollowers = (bestFollowers > 5) && kMerFollowers > deepestFollowers;
+
                                     //DumpFollowingMatches(kMer, currentDepth, kMerSize, kMerFollowers, matchesAt, matchesFound, kMerTable);
                                     //DumpFollowingMatches(deepestVariant, deepestVariantDepth, kMerSize, kMerFollowers, matchesAt, matchesFound, kMerTable);
                                 }
@@ -3881,7 +3955,7 @@ namespace Kelpie
                                         log.WriteLine();
                                     }
 
-                                //if (kMerCanonical == 0x711D92F514177760)
+                                //if (kMerCanonical == 0x0303BE03007A375D)
                                 //    Debugger.Break();
 
                                 if (kMersToCullLocal.ContainsKey(kMerCanonical))
@@ -3925,7 +3999,7 @@ namespace Kelpie
                                     if (currentDepth > minDepthForRead)
                                         minDepthForRead = currentDepth;
 
-                                    //if (kMerCanonical == 0x711D92F514177760)
+                                    //if (kMerCanonical == 0x0303BE03007A375D)
                                     //    Debugger.Break();
 
                                     if (kMersToCullLocal.ContainsKey(kMerCanonical))
@@ -3970,7 +4044,7 @@ namespace Kelpie
 
                         if (kMerOK)
                         {
-                            //if (kMerCanonical == 0x9C48275D4E2433C8)
+                            //if (kMerCanonical == 0x0303BE03007A375D)
                             //    Debugger.Break();
 
                             //if (r == 4211 || r == 10367)
@@ -4030,7 +4104,8 @@ namespace Kelpie
                                 ulong kMerCanonical = kMers.Canonical(kMersFromRead[m], kMerSize);
                                 if (kMersDeemedOKLocal.ContainsKey(kMerCanonical))
                                 {
-                                    kMersDeemedOKLocal[kMerCanonical]--;
+                                    if (kMersDeemedOKLocal[kMerCanonical] > 0)
+                                        kMersDeemedOKLocal[kMerCanonical]--;
                                     if (log != null)
                                         lock (log)
                                         {
@@ -4107,10 +4182,10 @@ namespace Kelpie
                 int redeemedCount;
                 kMersDeemedOK.TryGetValue(kMerToCull, out redeemedCount);
 
-                //if (kMerToCull == 0xC832F80C03C3245C)
+                //if (kMerToCull == 0x80D5AA7415681E5D)
                 //    Debugger.Break();
 
-                if (cullCount > redeemedCount * 10 && redeemedCount < minDepth)
+                if (cullCount > redeemedCount * 5 && CloseToNoise(redeemedCount, Math.Max(minDepth, redeemedCount / errorRate)))
                 {
                     kMerTable[kMerToCull] = 0;
                     kMersCulled++;
@@ -4122,7 +4197,7 @@ namespace Kelpie
 
         // finds the (tagged) primer reads from selectedReads - called at the start of the extending phase to get the sets of starting reads 
         private static void ExtractPrimerReads(List<string> selectedHeaders, List<string> selectedReads, List<int> partitionStarts, List<int> partitionEnds,
-                                               int startingReadTrim, List<int> readsWithStartingPrimers, Dictionary<string, int> startsOfFPReads,
+                                               int startingReadTrim, int forwardPrimerLength, List<int> readsWithStartingPrimers, Dictionary<string, int> startsOfFPReads, Dictionary<int, string> FPReadPrimers,
                                                List<int> nonStartingReads, HashSet<int> readsStartingWithPrimer, HashSet<int> readsEndingWithPrimer, out int longestSelectedRead, ParallelOptions threads)
         {
             Console.WriteLine("find reads with primers");
@@ -4197,21 +4272,23 @@ namespace Kelpie
                 //if (r == 12813)
                 //    Debugger.Break();
 
-                // tile for all shortest-pair-size fragments, starting from the second base of the forward primer and going until half-way through the primer
+                // tile for all shortest-context fragments, starting from the second base of the forward primer and going until half-way through the primer
                 // remember the fragment and where in the primer it started (these will always contain at least the second half of the primer)
                 for (int i = 1; i < startingReadTrim; i++)
                 {
-                    if (i + shortestPairSize > startingRead.Length)
+                    if (i + shortestContextSize > startingRead.Length)
                         break;
 
-                    string startOfRegion = startingRead.Substring(i, shortestPairSize);
+                    string startOfRegion = startingRead.Substring(i, shortestContextSize);
                     if (!startsOfFPReads.ContainsKey(startOfRegion))
                         startsOfFPReads.Add(startOfRegion, i);
                     //if (startOfRegion == "CAGGGTATCTAATCTTGTTCGCTCCCCATGCTTTCGCTCC")
                     //    Debugger.Break();
                 }
+                string startingReadPrimer = startingRead.Substring(0, forwardPrimerLength);
+                FPReadPrimers.Add(r, startingReadPrimer);
 
-                // partially trim the forward primer and save the rest of the read (at least short kMer pair in length)
+                // partially trim the forward primer and save the rest of the read (at least short kMer context in length)
                 startingRead = startingRead.Substring(startingReadTrim);
                 selectedReads[r] = startingRead;
             }
@@ -4287,11 +4364,11 @@ namespace Kelpie
             //} // for each partition
         }
 
-        // Generate the set of kMer pairs from the selected reads - for a given pair-length
-        private static void GeneratePairTable(int pairLength, List<string> selectedHeaders, List<string> selectedReads, List<int> selectedPartitionStarts, List<int> selectedPartitionEnds, 
-                                              HashSet<int> nonACGTReads, Dictionary<ulong, int> kMerTable, ReadStats[] statsForReads, Dictionary<int, Dictionary<ulong, int>> kMerPairs, ParallelOptions threads)
+        // Generate the set of kMer context from the selected reads - for a given context-length
+        private static void GenerateContextTable(int contextLength, List<string> selectedHeaders, List<string> selectedReads, List<int> selectedPartitionStarts, List<int> selectedPartitionEnds,
+                                                 HashSet<int> nonACGTReads, Dictionary<ulong, int> kMerTable, ReadStats[] statsForReads, Dictionary<int, Dictionary<ulong, int>> kMerContexts, ParallelOptions threads)
         {
-            Dictionary<ulong, int> pairTable = kMerPairs[pairLength];
+            Dictionary<ulong, int> contextTable = kMerContexts[contextLength];
 
             //for (int srp = 0; srp < selectedPartitionStarts.Count; srp++)
             Parallel.For(0, selectedPartitionStarts.Count, threads, srp =>
@@ -4300,24 +4377,15 @@ namespace Kelpie
                 bool[] kMersValid = new bool[1000];
                 int[] kMerDepths = new int[1000];
 
-                //ulong hashedPairTarget = GetPairFromSeq("TCACCATACTATTAACTGATCGAAATTTAAATACTTCATTTTTT", 32);
-                //ulong hashedPairTarget = 0x3f0dfd0bbfc4fa04;
-
-                Dictionary<ulong, int> pairTableLocal = new Dictionary<ulong, int>();
+                Dictionary<ulong, int> contextTableLocal = new Dictionary<ulong, int>();
 
                 for (int r = selectedPartitionStarts[srp]; r < selectedPartitionEnds[srp]; r++)
                 {
                     string header = selectedHeaders[r];
                     string read = selectedReads[r];
-                    bool writePairs = false;
 
                     if (!nonACGTReads.Contains(r))
                     {
-                        //if (read == "TTAAGCCAAAGGATTTCACATCTGACTATCACAACCACCTACGCGCCCTTTACGCCCAATAATTCCGAACAACGCTTGCACCCTCCGTATTACCGCGGCTG" /*|| header.StartsWith(">RM2|S2|R5117840/1")*/)
-                        //{
-                        //    writePairs = true;
-                        //    Debugger.Break();
-                        //}
                         //if (r == 13630)
                         //    Debugger.Break();
 
@@ -4329,41 +4397,55 @@ namespace Kelpie
                             if (kMerDepths[k] < statsForReads[r].minDepth)
                                 kMerDepths[k] = 0;
 
-                        int pairCount = read.Length - pairLength + 1;
-                        for (int p = 0; p < pairCount; p++)
+                        int contextCount = read.Length - contextLength + 1;
+                        // tile the read for valid contexts in a forward direction
+                        for (int p = 0; p < contextCount; p++)
                         {
-                            int secondMerIdx = p + pairLength - kMerSize;
-                            //ulong hashedPairTest = HashPair(kMersFromRead[p], kMersFromRead[secondMerIdx], kMerSize);
-                            //if (hashedPairTest == hashedPairTarget)
-                            //    Debugger.Break();
+                            int secondMerIdx = p + contextLength - kMerSize;
                             if (kMerDepths[p] > 0 && kMerDepths[secondMerIdx] > 0)
                             {
-                                if (writePairs)
-                                {
-                                    Console.WriteLine(pairLength + ": " + kMers.ExpandMer(kMersFromRead[p], kMerSize) + "+" + kMers.ExpandMer(kMersFromRead[secondMerIdx], kMerSize));
-                                }
-                                ulong hashedPair = HashPair(kMersFromRead[p], kMersFromRead[secondMerIdx], kMerSize);
-                                if (pairTableLocal.ContainsKey(hashedPair))
-                                    pairTableLocal[hashedPair]++;
+                                ulong hashedContext = HashContext(kMersFromRead, kMerSize, p, contextLength);
+                                if (contextTableLocal.ContainsKey(hashedContext))
+                                    contextTableLocal[hashedContext]++;
                                 else
-                                    pairTableLocal.Add(hashedPair, 1);
+                                    contextTableLocal.Add(hashedContext, 1);
+                            }
+                        }
+                        // and now (effectively) for the RCed read
+                        Array.Reverse(kMersFromRead, 0, kMerCount);
+                        Array.Reverse(kMerDepths, 0, kMerCount);
+                        for (int i = 0; i < kMerCount; i++)
+                            kMersFromRead[i] = kMers.ReverseComplement(kMersFromRead[i], kMerSize);
+                        for (int p = 0; p < contextCount; p++)
+                        {
+                            int secondMerIdx = p + contextLength - kMerSize;
+                            if (kMerDepths[p] > 0 && kMerDepths[secondMerIdx] > 0)
+                            {
+                                ulong hashedContext = HashContext(kMersFromRead, kMerSize, p, contextLength);
+                                if (contextTableLocal.ContainsKey(hashedContext))
+                                    contextTableLocal[hashedContext]++;
+                                else
+                                    contextTableLocal.Add(hashedContext, 1);
                             }
                         }
                     }
                 }
 
-                lock (pairTable)
+                lock (contextTable)
                 {
-                    foreach (KeyValuePair<ulong, int> kvp in pairTableLocal)
+                    foreach (KeyValuePair<ulong, int> kvp in contextTableLocal)
                     {
-                        if (pairTable.ContainsKey(kvp.Key))
-                            pairTable[kvp.Key] += kvp.Value;
+                        if (contextTable.ContainsKey(kvp.Key))
+                            contextTable[kvp.Key] += kvp.Value;
                         else
-                            pairTable.Add(kvp.Key, kvp.Value);
+                            contextTable.Add(kvp.Key, kvp.Value);
                     }
                 }
             });
             //}
+
+            //if (contexts != null)
+            //    contexts.Close();
         }
 
         // core Refresh Stats method. Called only from wrapper methods, never directly
@@ -4520,7 +4602,7 @@ namespace Kelpie
 
                 for (int r = selectedPartitionStarts[srp]; r < selectedPartitionEnds[srp]; r++)
                 {
-                    //if (r == 549)
+                    //if (r == 74311)
                     //    Debugger.Break();
 
                     // refresh the per-read stats now that the denoising has been completed
@@ -4748,7 +4830,7 @@ namespace Kelpie
         }
 
         // clean (error correct) a starting read
-        private static bool CleanStartingRead(int kMerSize, Dictionary<ulong, int> kMerTable, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs,
+        private static bool CleanStartingRead(int kMerSize, Dictionary<ulong, int> kMerTable, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts,
                                               Sequence seq, int minDepth, ReadStats readStats, int r, string tag, StreamWriter log, out int lastGoodBase)
         {
             int cumulativeChanges = 0;
@@ -4764,7 +4846,7 @@ namespace Kelpie
 
             //if (seq.ToString() == "TCAACTAATCATAAAGATATTGGAACGCTTTATTTTATTTTTGGGGCCTGGGCAGGCATATTGGGAAC")
             //    Debugger.Break();
-            //if (r == 4444)
+            //if (r == 10895)
             //{
             //    targetRead = true;
             //    Debugger.Break();
@@ -4778,12 +4860,12 @@ namespace Kelpie
             // scan the (possibly updated) read looking for aberrant kMers
             for (int m = 0; m < kMerCount; m++)
             {
-                // look for kMers that appear to be suspect - poor kMer depth or no pair (when possible)
+                // look for kMers that appear to be suspect - poor kMer depth or no context (when possible)
                 ulong kMer;
                 Sequence.CondenseMer(seq, m, kMerSize, out kMer);
                 int currentDepth = kMerTableLookup(kMer, kMerTable, kMerSize);
 
-                //if (kMer == 0xCC23FE3CF955777C)
+                //if (kMer == 0x80D5AA7415681E5D)
                 //    Debugger.Break();
 
                 // look out for a dubious first kMer (should be similar to overall depth as it's at the relatively conserved start of a starting read
@@ -4824,7 +4906,12 @@ namespace Kelpie
                     }
                 }
 
-                CheckVariantViability(seq, m, kMerSize, kMerVariants, kMerVariantDepths, previousDepth, readStats.minDepth, previousDepth, variantAlive, null, kMerPairs, pairSizes, 1, out failureReason, log);
+                // check for a longer context that will fit into the (possibly truncated) read
+                int lastContextLengthIdx = 4;
+                while (m + kMerSize < contextLengths[lastContextLengthIdx] && lastContextLengthIdx > 0)
+                    lastContextLengthIdx--;
+
+                CheckVariantViability(seq, m, kMerSize, kMerVariants, kMerVariantDepths, previousDepth, Math.Max(readStats.minDepth, previousDepth / errorRate), previousDepth, variantAlive, null, kMerContexts, contextLengths, lastContextLengthIdx, out failureReason, log);
 
                 // never declare the current kMer as unviable at this stage
                 if (!variantAlive[currentMerIdx])
@@ -4930,7 +5017,7 @@ namespace Kelpie
                     if (currentDepth > readStats.minDepth)
                     {
                         DecrementMerTable(m, seq, kMerTable, kMerSize);
-                        DecrementPairsTable(m, seq, pairSizes, kMerPairs);
+                        DecrementContextTables(m, seq, contextLengths, kMerContexts);
                     }
 
                     // decided to replace the current kMer
@@ -4938,7 +5025,7 @@ namespace Kelpie
                     readChanged = true;
 
                     IncrementMerTable(m, seq, kMerTable, kMerSize);
-                    IncrementPairsTable(m, seq, pairSizes, kMerPairs);
+                    IncrementContextTables(m, seq, contextLengths, kMerContexts);
 
                     RefreshStatsForRead(seq, kMerTable, kMerSize, minDepth, readStats);
                     currentDepth = bestVariantDepth;
@@ -5018,7 +5105,7 @@ namespace Kelpie
 
         // clean (and possibly trim/extend) all the starting reads
         private static void GenerateFinalStartingReads(List<int> readsWithStartingPrimers, List<string> selectedHeaders, List<string> selectedReads, ReadStats[] statsForReads, List<int> finalStartingReads, int minReadLength,
-                                                       int kMerSize, int minDepth, Dictionary<ulong, int> kMerTable, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs,
+                                                       int kMerSize, int minDepth, Dictionary<ulong, int> kMerTable, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts,
                                                        out int cleanStartingReads, out int shortStartingReads, out int extendedShortStartingReads, out int stillShortStartingReads, out int uncleanStartingReads,
                                                        StreamWriter log, ParallelOptions threads)
         {
@@ -5066,17 +5153,17 @@ namespace Kelpie
                     int r = readsWithStartingPrimers[sri];
                     string startingRead = selectedReads[r];
 
-                    //if (r == 220574)
+                    //if (r == 10895)
                     //    Debugger.Break();
                     //if (selectedHeaders[r].StartsWith(">RM2|S2|R33008013/2"))
                     //    Debugger.Break();
-                    //if (startingRead == "GCCGCGGTAATACGGAGGGTGCAAGCGTTGTTCGGAATTATTGGGCGTAAAGGGCGCGTAGGTGGTTGTGATAGTCAGATGTGAAATCCTTTGGCTTAA")
+                    //if (startingRead == "GCCGCGGTAATACGGAGGGGGCTAGCGTTGTTCGGAATTACTGGGCGTAAAGCGCGCGTAGGaGGATTGGAAAGTTGGGGGTGAAATCCCGGGGCTCAACCCCGGAACTGCCTCCAAAACTATCAGTCTGGAGTTCGAGAGAGGTGAG")
                     //    Debugger.Break();
 
                     // turn string into Sequence to make CleanStartingRead and ExtendShortStartingRead easier
                     Sequence seq = new Sequence(startingRead);
 
-                    bool cleanRead = CleanTrimStartingRead(kMerSize, kMerTable, pairSizes, kMerPairs, seq, minDepth, statsForReads[r], r, log);
+                    bool cleanRead = CleanTrimStartingRead(kMerSize, kMerTable, contextLengths, kMerContexts, seq, minDepth, statsForReads[r], r, log);
 
                     // starting primer/kMer is OK, and we've made whatever corrections we could, and possibly trimmed an uncorrectable tail
                     // so now try extending the read if it's too short
@@ -5093,7 +5180,7 @@ namespace Kelpie
                             shortStartingReadsLocal++;
 
                             // try extending the read if it's shorter than allowed
-                            bool extendedOK = ExtendShortStartingRead(seq, kMerTable, kMerSize, minReadLength, pairSizes, kMerPairs, statsForReads[r], log);
+                            bool extendedOK = ExtendShortStartingRead(seq, kMerTable, kMerSize, minReadLength, contextLengths, kMerContexts, statsForReads[r], log);
                             if (extendedOK)
                             {
                                 RefreshStatsForRead(seq, kMerTable, kMerSize, minDepth, statsForReads[r]);
@@ -5178,44 +5265,40 @@ namespace Kelpie
         {
             // get the depths from this read
             int kMerCount = GetDepthsForRead(startingRead, kMerTable, kMerSize, ref kMersFromRead, ref kMersValid, ref kMerDepths, out int deepestDepth, out int lowestDepth);
-            // and tile it for kMer pairs (starting from first kMer in (possibly trimmed) read)
-            int firstPairIdx = minReadLength - kMerSize;
+            // and tile it for kMer contexts (starting from first kMer in (possibly trimmed) read)
+            int firstContextIdx = minReadLength - kMerSize;
             int startIdx = 0;
 
             //contexts.WriteLine(r + ":\t" + startingRead);
 
-            for (int i = firstPairIdx; i < kMerCount; i++)
+            for (int i = firstContextIdx; i < kMerCount; i++)
             {
                 // stop scanning if we hit a culled kMer
                 if (kMerDepths[i] == 0)
                     break;
 
-                ulong pair = kMersFromRead[startIdx] ^ kMersFromRead[i];
+                ulong context = kMersFromRead[startIdx] ^ kMersFromRead[i];
                 int length = i + kMerSize - startIdx;
                 if (!startingContexts.ContainsKey(length))
                     startingContexts.Add(length, new HashSet<ulong>());
 
-                bool newPair = startingContexts[length].Add(pair);
-
-                //contexts.WriteLine(kMers.ExpandMer(kMersFromRead[startIdx], 32) + "+" + kMers.ExpandMer(kMersFromRead[i], 32) + "-->" + pair.ToString("x16") + (newPair?" new":""));
-                //if (newPair && length == 66 && (pair == 15491403513568108607 || pair == 15491403513568108605))
-                //    Debugger.Break();
+                startingContexts[length].Add(context);
             }
         }
 
-        private static bool CleanTrimStartingRead(int kMerSize, Dictionary<ulong, int> kMerTable, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs, Sequence seq, int minDepth, ReadStats readStats, int readNo, StreamWriter log)
+        private static bool CleanTrimStartingRead(int kMerSize, Dictionary<ulong, int> kMerTable, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts, Sequence seq, int minDepth, ReadStats readStats, int readNo, StreamWriter log)
         {
             int lastGoodBaseFwd = 0;
 
-            bool cleanRead = CleanStartingRead(kMerSize, kMerTable, pairSizes, kMerPairs, seq, minDepth, readStats, readNo, "1x", log, out lastGoodBaseFwd);
+            bool cleanRead = CleanStartingRead(kMerSize, kMerTable, contextLengths, kMerContexts, seq, minDepth, readStats, readNo, "1x", log, out lastGoodBaseFwd);
 
             if (!cleanRead && lastGoodBaseFwd < kMerSize)
             {
                 seq.ReverseComplement();
                 int lastGoodBaseRvs = 0;
-                cleanRead = CleanStartingRead(kMerSize, kMerTable, pairSizes, kMerPairs, seq, minDepth, readStats, readNo, "(rc)", log, out lastGoodBaseRvs);
+                cleanRead = CleanStartingRead(kMerSize, kMerTable, contextLengths, kMerContexts, seq, minDepth, readStats, readNo, "(rc)", log, out lastGoodBaseRvs);
                 seq.ReverseComplement();
-                cleanRead = CleanStartingRead(kMerSize, kMerTable, pairSizes, kMerPairs, seq, minDepth, readStats, readNo, "2x", log, out lastGoodBaseFwd);
+                cleanRead = CleanStartingRead(kMerSize, kMerTable, contextLengths, kMerContexts, seq, minDepth, readStats, readNo, "2x", log, out lastGoodBaseFwd);
             }
 
             if (!cleanRead)
@@ -5236,7 +5319,7 @@ namespace Kelpie
                 Sequence.CondenseMer(seq, i, kMerSize, out kMer);
                 ulong kMerCanonical = Canonical(kMer, kMerSize);
 
-                //if (kMerCanonical == 0x61F2995971915FC0)
+                //if (kMerCanonical == 0xCCFC64FF167113A0)
                 //    Debugger.Break();
 
                 if (kMerTable.ContainsKey(kMerCanonical) && kMerTable[kMerCanonical] > 0)
@@ -5262,7 +5345,7 @@ namespace Kelpie
             }
         }
 
-        private static void DecrementPairsTable(int m, Sequence seq, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs)
+        private static void DecrementContextTables(int m, Sequence seq, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts)
         {
             int craterLength = Math.Min(kMerSize, (seq.Length - (m + kMerSize)));
             int endOfCraterM = m + craterLength;
@@ -5272,28 +5355,25 @@ namespace Kelpie
                 ulong kMer;
                 Sequence.CondenseMer(seq, m, kMerSize, out kMer);
 
-                for (int p = 0; p < pairSizes.Count; p++)
+                for (int p = 0; p < contextLengths.Count; p++)
                 {
-                    int pairSize = pairSizes[p];
-                    Dictionary<ulong, int> kMerPairsTable = kMerPairs[pairSize];
-                    int endOfPairM = m - kMerSize + pairSize;
+                    int contextLength = contextLengths[p];
+                    Dictionary<ulong, int> kMerContextTable = kMerContexts[contextLength];
+                    int endOfContextM = m - kMerSize + contextLength;
 
-                    if (endOfPairM + kMerSize > seq.Length)
+                    if (endOfContextM + kMerSize > seq.Length)
                         break;
 
-                    ulong finalMerInPair;
-                    Sequence.CondenseMer(seq, endOfPairM, kMerSize, out finalMerInPair);
-
-                    ulong hashedPair = HashPair(finalMerInPair, kMer, kMerSize);
-                    //if (hashedPair == 9380718699553647176)
+                    ulong hashedContext = HashContext(seq, kMerSize, m, contextLength);
+                    //if (hashedContext == 9380718699553647176)
                     //    Debugger.Break();
-                    if (kMerPairsTable.ContainsKey(hashedPair) && kMerPairsTable[hashedPair] > 0)
-                        kMerPairsTable[hashedPair]--;
+                    if (kMerContextTable.ContainsKey(hashedContext) && kMerContextTable[hashedContext] > 0)
+                        kMerContextTable[hashedContext]--;
                 }
             }
         }
 
-        private static void IncrementPairsTable(int m, Sequence seq, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs)
+        private static void IncrementContextTables(int m, Sequence seq, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts)
         {
             int craterLength = Math.Min(kMerSize, (seq.Length - (m + kMerSize)));
             int endOfCraterM = m + craterLength;
@@ -5303,23 +5383,20 @@ namespace Kelpie
                 ulong kMer;
                 Sequence.CondenseMer(seq, m, kMerSize, out kMer);
 
-                for (int p = 0; p < pairSizes.Count; p++)
+                for (int p = 0; p < contextLengths.Count; p++)
                 {
-                    int pairSize = pairSizes[p];
-                    Dictionary<ulong, int> kMerPairsTable = kMerPairs[pairSize];
-                    int endOfPairM = m - kMerSize + pairSize;
+                    int contextLength = contextLengths[p];
+                    Dictionary<ulong, int> kMerContextTable = kMerContexts[contextLength];
+                    int endOfContextM = m - kMerSize + contextLength;
 
-                    if (endOfPairM + kMerSize > seq.Length)
+                    if (endOfContextM + kMerSize > seq.Length)
                         break;
 
-                    ulong finalMerInPair;
-                    Sequence.CondenseMer(seq, endOfPairM, kMerSize, out finalMerInPair);
-
-                    ulong hashedPair = HashPair(finalMerInPair, kMer, kMerSize);
-                    //if (hashedPair == 13687008140760238416)
+                    ulong hashedContext = HashContext(seq, kMerSize, m, contextLength);
+                    //if (hashedContext == 13687008140760238416)
                     //    Debugger.Break();
-                    if (kMerPairsTable.ContainsKey(hashedPair) && kMerPairsTable[hashedPair] > 0)
-                        kMerPairsTable[hashedPair]++;
+                    if (kMerContextTable.ContainsKey(hashedContext) && kMerContextTable[hashedContext] > 0)
+                        kMerContextTable[hashedContext]++;
                 }
             }
         }
@@ -5440,28 +5517,26 @@ namespace Kelpie
             return foundCrater;
         }
 
-        private static bool CheckAllPairs(ulong kMer, Sequence seq, ReadStats readStats, int ki, int kMerSize, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs)
+        private static bool CheckAllContexts(ulong kMer, Sequence seq, ReadStats readStats, int ki, int kMerSize, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts)
         {
-            bool pairsOK = true;
+            bool contextOK = true;
             int pli = 0;
-            while (pli < kMerPairs.Count && pairsOK)
+            while (pli < kMerContexts.Count && contextOK)
             {
-                int pairSize = pairSizes[pli];
-                int pairStart = ki + kMerSize - pairSize;
-                if (pairStart < 0)
+                int contextLength = contextLengths[pli];
+                int contextStart = ki + kMerSize - contextLength;
+                if (contextStart < 0)
                     break;
 
-                Dictionary<ulong, int> kMerPairsTable = kMerPairs[pairSize];
+                Dictionary<ulong, int> kMerContextTable = kMerContexts[contextLength];
 
-                ulong firstMerInPair;
-                Sequence.CondenseMer(seq, pairStart, kMerSize, out firstMerInPair);
-                int pairCount;
-                kMerPairsTable.TryGetValue(HashPair(firstMerInPair, kMer, kMerSize), out pairCount);
-                pairsOK = pairCount >= readStats.minDepth;
+                ulong hashedContext = HashContextVariant(seq, kMerSize, contextStart, contextLength, kMer);
+                kMerContextTable.TryGetValue(hashedContext, out int contextCount);
+                contextOK = contextCount >= readStats.minDepth;
                 pli++;
             }
 
-            return pairsOK;
+            return contextOK;
         }
 
         // Count how many following kMers in a read have counts above the minDepthForRead threshold. This function is recursive to allow it to progress past erroneous bases (that will be cleaned up soon)
@@ -5477,7 +5552,7 @@ namespace Kelpie
             ulong lbMask = 0xffffffffffffffff << (32 - kMerSize + 1) * 2;
             ulong nextMer = kMer;
 
-            // check every kmer in the reaminder of the read
+            // check every kmer in the remainder of the read
             for (int nm = m + 1; nm < lastToCheck; nm++)
             {
                 int nbi = nm + kMerSize - 1;
@@ -5539,7 +5614,7 @@ namespace Kelpie
         }
 
         // extend this read until we reach a fork, can't find a following kMer or have extended the read enough
-        private static bool ExtendShortStartingRead(Sequence read, Dictionary<ulong, int> kMerTable, int kMerSize, int minLengthRequired, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs, ReadStats readStats, StreamWriter log)
+        private static bool ExtendShortStartingRead(Sequence read, Dictionary<ulong, int> kMerTable, int kMerSize, int minLengthRequired, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts, ReadStats readStats, StreamWriter log)
         {
             bool extending = true;
             // set the min depth here to be higher than usual
@@ -5580,12 +5655,12 @@ namespace Kelpie
                     {
                         kMerVariantDepths[v] = 0;
                     }
-                    bool pairsOKForVariant = false;
+                    bool contextsOKForVariant = false;
                     if (kMerVariantDepths[v] > 0)
-                        pairsOKForVariant = CheckAllPairs(kMerVariants[v], read, readStats, (read.Length - kMerSize + 1), kMerSize, pairSizes, kMerPairs);
+                        contextsOKForVariant = CheckAllContexts(kMerVariants[v], read, readStats, (read.Length - kMerSize + 1), kMerSize, contextLengths, kMerContexts);
 
-                    // cull any variants where a pair was not found
-                    if (!pairsOKForVariant)
+                    // cull any variants where a context was not found
+                    if (!contextsOKForVariant)
                         kMerVariantDepths[v] = 0;
                 }
 
@@ -5653,16 +5728,17 @@ namespace Kelpie
         }
 
         // final step in the extension process - trimming away the FP stub, and the TP. This method also decides whether an extended read is 'good' or should be discarded
-        private static Dictionary<string, int> TrimExtendedReads(Dictionary<string, int> extendedReads, int fwdPrimerHeadLength, int rvsPrimerHeadLength, int primerCoreLength, HashSet<string>[] terminatingPrimers, int minLength, int maxLength, string direction, Dictionary<string, int> discards, StreamWriter log)
+        private static int TrimExtendedReads(Dictionary<int, string> extendedReads, int fwdPrimerHeadLength, int rvsPrimerHeadLength, int primerCoreLength, HashSet<string>[] terminatingPrimers,
+                                             int minLength, int maxLength, Dictionary<int, string> trimmedGoodReads, Dictionary<int, string> TPsFound, Dictionary<string, int> discards, StreamWriter log)
         {
-            Dictionary<string, int> trimmedReads = new Dictionary<string, int>(extendedReads.Count);
+            // trimmedGoodReads just the fully-extended reads - discarded reads get dereplicated and saved in discards. The int is the record number and the string is the trimmed extended read
             int droppedReadCount = 0;
             int partialForwardprimerLength = (fwdPrimerHeadLength + primerCoreLength) - (fwdPrimerHeadLength + primerCoreLength) / 2;
 
-            foreach (KeyValuePair<string, int> kvp in extendedReads)
+            foreach (KeyValuePair<int, string> kvp in extendedReads)
             {
-                string extendedRead = kvp.Key;
-                int extendedReadCount = kvp.Value;
+                int r = kvp.Key;
+                string extendedRead = kvp.Value;
                 bool foundTerminatingPrimer = false;
 
                 //if (extendedRead == "TAAAGATATTGGAACTTTATATTTTATTTTTGGTGTATGAGCAGGAATAATTGGAACTTCTTTAAGTTTATTAATTCGTACAGAATTAGGTAATCCTGGATCACTAATTGGAGATGATCAAATTTATAATACTATTGTTACAGCTCATGCCTTTATTATAATTTTTTTTATAGTTATGCCAATTATAATTGGAGGATTTGGTAATTGATTAATTCCTTTGATATTAGGAGCCCCTGATATAGCTTTCCCACGTATAAATAA")
@@ -5675,6 +5751,7 @@ namespace Kelpie
                 extendedRead = extendedRead.Substring(partialForwardprimerLength);
 
                 // check for a terminal primer at the end
+                string TPFound = "noTPFound";
                 int lastPossibleRPIdx = extendedRead.Length - (rvsPrimerHeadLength + primerCoreLength);
                 if (lastPossibleRPIdx >= 0)
                 {
@@ -5684,6 +5761,7 @@ namespace Kelpie
                     // and trim away the primer if we found one
                     if (terminatingPrimers[head].Contains(possibleRPHead) && terminatingPrimers[core].Contains(possibleRPCore))
                     {
+                        TPFound = possibleRPCore + possibleRPHead;
                         extendedRead = extendedRead.Substring(0, lastPossibleRPIdx);
                         foundTerminatingPrimer = true;
                     }
@@ -5697,34 +5775,34 @@ namespace Kelpie
 
                 if (foundTerminatingPrimer || (minLength > 0 && extendedRead.Length >= minLength) || extendedRead.Length == maxLength)
                 {
-                    if (trimmedReads.ContainsKey(extendedRead))
-                        trimmedReads[extendedRead] += extendedReadCount;
-                    else
-                        trimmedReads.Add(extendedRead, extendedReadCount);
+                    trimmedGoodReads.Add(r, extendedRead);
+                    TPsFound.Add(r, TPFound);
                 }
                 else
                 {
                     if (discards.ContainsKey(extendedRead))
-                        discards[extendedRead] += extendedReadCount;
+                        discards[extendedRead]++;
                     else
-                        discards.Add(extendedRead, extendedReadCount);
-                    droppedReadCount += extendedReadCount;
+                        discards.Add(extendedRead, 1);
+                    droppedReadCount++;
 
                     if (log != null)
-                        log.WriteLine("dropped: " + "(" + kvp.Value + ") " + kvp.Key + " " + (foundTerminatingPrimer ? "TP" : "NTP") + ", " + extendedRead.Length + "b");
+                        log.WriteLine("dropped: " + r + " (" + extendedRead.Length + "b," + (foundTerminatingPrimer ? "TP" : "NTP") + ") " + extendedRead);
                 }
             }
 
-            return trimmedReads;
+            return trimmedGoodReads.Count;
         }
 
-        // Loop overall the starting reads, trying to extend each one in turn. Successfuly extended reads are cached and the cache value is re-used if possible (no coin toss)
-        private static Dictionary<string, int> ExtendFromStartingReads(List<string> selectedReads, List<int> startingReads, int minReadLength, int maxLength, int longestReadLength, ReadStats[] readStats, int kMerSize, Dictionary<ulong, int> kMerTable,
-                                                                       Dictionary<int, HashSet<ulong>> startingContexts, List<int> pairSizes, Dictionary<int, Dictionary<ulong, int>> kMerPairs, int[] pairSizeStats,
+        // Loop overall the starting reads, trying to extend each one in turn. Successfuly extended reads are cached and the cache value is re-used if possible (no coin toss was used)
+        private static Dictionary<int, string> ExtendFromStartingReads(List<string> selectedReads, List<int> startingReads, int minReadLength, int maxLength, int longestReadLength, ReadStats[] readStats, int kMerSize, Dictionary<ulong, int> kMerTable,
+                                                                       Dictionary<int, HashSet<ulong>> startingContexts, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts, int[] contextLengthStats,
                                                                        HashSet<ulong>[] extensionTerminatingPrimers, int fwdPrimerHeadLength, int rvsPrimerHeadLength, int primerCoreLength, StreamWriter log)
         {
-            Dictionary<string, int> fullyExtendedReads = new Dictionary<string, int>();             // reads that have been extended as far as possible (and will be returned from this method) (reads and counts)
-            Dictionary<string, Extension> cachedExtensions = new Dictionary<string, Extension>();   // read prefixes that have been extended previously - no need to repeat
+            // extended starting reads - int is read idx (from startingReads), string is extended read
+            Dictionary<int, string> extendedStartingReads = new Dictionary<int, string>(startingReads.Count);
+            // read prefixes that have been extended previously - no need to repeat
+            Dictionary<string, Extension> cachedExtensions = new Dictionary<string, Extension>();
 
             HashSet<ulong> loopTrap = new HashSet<ulong>();
             int readsExtendedProgress = 0;
@@ -5732,12 +5810,12 @@ namespace Kelpie
 
             int reportingInterval = startingReads.Count / 10;
 
-            // convert the minReadLength to the max pair length that will fit inside such as short read (index)
-            int minViablePairIdx = 0;
-            for (int p = 0; p < pairSizes.Count; p++)
+            // convert the minReadLength to the max context length that will fit inside such as short read (index)
+            int minViableContextIdx = 0;
+            for (int p = 0; p < contextLengths.Count; p++)
             {
-                if (pairSizes[p] <= minReadLength)
-                    minViablePairIdx = p;
+                if (contextLengths[p] <= minReadLength)
+                    minViableContextIdx = p;
                 else
                     break;
             }
@@ -5777,15 +5855,12 @@ namespace Kelpie
                 {
                     Extension cachedExtension = cachedExtensions[startingRead];
                     string cachedExtendedRead = cachedExtension.extendedSeq.ToString();
-                    if (fullyExtendedReads.ContainsKey(cachedExtendedRead))
-                        fullyExtendedReads[cachedExtendedRead]++;
-                    else
-                        fullyExtendedReads.Add(cachedExtendedRead, 1);
-                    pairSizeStats[statsCachedResult]++;
+                    extendedStartingReads.Add(r, cachedExtendedRead);
+                    contextLengthStats[statsCachedResult]++;
                     if (log != null)
                     {
                         sw.Stop();
-                        log.WriteLine("cached: " + " tp=" + cachedExtension.terminatingPrimerReached + " cost=" + cachedExtension.costOfExtension + " md=" + cachedExtension.meanDepth + " avg=" + cachedExtension.avgDepth + " " + cachedExtendedRead);
+                        log.WriteLine("cached: " + " tp=" + cachedExtension.terminatingPrimerReached + " cost=" + cachedExtension.cost + " md=" + cachedExtension.meanDepth + " avg=" + cachedExtension.avgDepth + " " + cachedExtendedRead);
                     }
                     continue;
                 }
@@ -5798,7 +5873,7 @@ namespace Kelpie
                 int meanDepth = 0;
                 int avgDepth = 0;
 
-                Sequence extendedSeq = ExtendRead(1, new Sequence(startingRead), r, maxExtendedLength, longestReadLength, kMerSize, kMerTable, startingContexts, pairSizes, minViablePairIdx, kMerPairs, pairSizeStats, -1.0f, -1,
+                Sequence extendedSeq = ExtendRead(1, new Sequence(startingRead), r, maxExtendedLength, longestReadLength, kMerSize, kMerTable, startingContexts, contextLengths, minViableContextIdx, kMerContexts, contextLengthStats, -1.0f, -1,
                                                   cachedExtensions, loopTrap, extensionTerminatingPrimers, rvsPrimerHeadLength, primerCoreLength,
                                                   readStats[r], out terminatingPrimerReached, out coinTossed, out extensionAbandoned, out costOfExtension, out meanDepth, out avgDepth, log, breakOnRead);
 
@@ -5807,10 +5882,7 @@ namespace Kelpie
                 //if (extendedRead.ToString() == "GGGACTGGTTGAACTGTTTATCCTCCTTTATCTTCTAGTATTGCTCATAATGGAGCTTCTGTAGATTTAGCAATTTTTTCTCTTCATCTAGCTGGAATTTCAAGAATCTTAGGAGCAGTAAATTTTATTACTACAATTATTAATATACGATCAACAGGTATTACTTTTG")
                 //    Debugger.Break();
 
-                if (fullyExtendedReads.ContainsKey(extendedRead))
-                    fullyExtendedReads[extendedRead]++;
-                else
-                    fullyExtendedReads.Add(extendedRead, 1);
+                extendedStartingReads.Add(r, extendedRead);
 
                 if (cacheThings && !coinTossed)
                 {
@@ -5819,8 +5891,8 @@ namespace Kelpie
                     Extension cachedExtension = new Extension();
                     cachedExtension.extendedSeq = extendedSeq;
                     cachedExtension.terminatingPrimerReached = terminatingPrimerReached;
-                    cachedExtension.extensionAbandoned = extensionAbandoned;
-                    cachedExtension.costOfExtension = costOfExtension;
+                    cachedExtension.abandoned = extensionAbandoned;
+                    cachedExtension.cost = costOfExtension;
                     cachedExtension.meanDepth = meanDepth;
                     cachedExtension.avgDepth = avgDepth;
                     cachedExtensions.Add(startingRead, cachedExtension);
@@ -5833,12 +5905,12 @@ namespace Kelpie
                 }
             }
 
-            return fullyExtendedReads;
+            return extendedStartingReads;
         }
 
         // The core Kelpie recursive extension algorithm as described in the paper. Takes a starting read and extends it base-at-a-time. Multiple viable paths are handled by recursively exploring each one.
         private static Sequence ExtendRead(int level, Sequence seq, int readNo, int maxExtendedLength, int longestReadLength, int kMerSize, Dictionary<ulong, int> kMerTable, Dictionary<int, HashSet<ulong>> startingContexts,
-                                           List<int> pairSizes, int minViablePairIdx, Dictionary<int, Dictionary<ulong, int>> kMerPairs, int[] pairSizeStats, double invDepthSum, int depthSum,
+                                           List<int> contextLengths, int minViableContextIdx, Dictionary<int, Dictionary<ulong, int>> kMerContexts, int[] contextLengthStats, double invDepthSum, int depthSum,
                                            Dictionary<string, Extension> cachedExtensions, HashSet<ulong> loopTrap, HashSet<ulong>[] extensionTerminatingPrimers,
                                            int rvsPrimerHeadLength, int primerCoreLength, ReadStats readStats,
                                            out bool terminatingPrimerReached, out bool tossedCoin, out bool abandoned, out int cost, out int meanDepthExtendedRead, out int avgDepthExtendedRead, StreamWriter log, bool breakOnRead)
@@ -5856,7 +5928,6 @@ namespace Kelpie
             int basesAdded = 0;
             string failureReason = null;
             int lastAcceptedDepth = 0;
-            bool checkForLoop = seq.Length >= kMerSize * 2;
 
             // undo mean/avg calcs so we can do running means/avgs as bases are added
             if (invDepthSum < 0)
@@ -5887,15 +5958,15 @@ namespace Kelpie
             List<int> kMerVariantDepths = new List<int>(4);
             List<bool> variantAlive = new List<bool>(4);
             List<bool> variantPreviouslyAlive = new List<bool>(4);
-            List<int> previousPairDepth = new List<int>(4);
-            List<int> currentPairDepth = new List<int>(4);
+            List<int> previousContextDepth = new List<int>(4);
+            List<int> currentContextDepth = new List<int>(4);
 
             for (int v = 0; v < 4; v++)
             {
                 variantAlive.Add(false);
                 variantPreviouslyAlive.Add(false);
-                previousPairDepth.Add(0);
-                currentPairDepth.Add(0);
+                previousContextDepth.Add(0);
+                currentContextDepth.Add(0);
             }
 
             if (log != null && breakOnRead)
@@ -5914,7 +5985,7 @@ namespace Kelpie
 
                 int viableAlternatives = 0;
                 int chosenIdx = -1;
-                pairSizeStats[statsNextIdx]++;
+                contextLengthStats[statsNextIdx]++;
 
                 //if (kMer == 0xF078D80FC0C7D3FF && breakOnRead)
                 //    Debugger.Break();
@@ -5922,18 +5993,23 @@ namespace Kelpie
                 int runningMeanDepth = (int)((double)kMersInRead / invDepthSum);
                 int runningAvgDepth = depthSum / kMersInRead;
                 int minDepthForRead = runningMeanDepth / 4;
-                int meanPairDepth = GetMeanPairDepth(seq, kMer, kMerSize, pairSizes, kMerPairs);
+                int meanContextDepth = GetMeanContextDepth(seq, kMer, kMerSize, contextLengths, kMerContexts);
+                bool checkForLoop = seq.Length >= kMerSize * 2;
 
-                //if (kMer == 0x32F3173CC3E8A3FA && seq.ToString() == "TAAAGACATTGGAACTTTATATTTTATATTTGGAGCTTGGGCAGGAATAGTTGGTACTTCATTAAGTATTCTAATTCGAGCTGAATTAGGACACCCTGGTGCCCTAATTGGAGACGACCAAATTTATAATGTAATTGTTACAGCTCATGCTTTTATTATAATTTTTTTTATAGTTATACCTATTATAATTGGAGGATTTGG")
-                //    Debugger.Break();
-                //if (kMer == 0xF078D80FC0C7D3FF)
+                //if (kMer == 0xC5CF30FA28FE80F8)
+                //{
+                //    Sequence.CondenseMer(seq, seq.Length - 2 * kMerSize - 8, kMerSize, out ulong preceding);
+                //    if (preceding == 0xBC49D39FF3CC3FFF && seq.Bases[seq.Length - 32 - 2] == 'T')
+                //        Debugger.Break();
+                //}
+                //if (kMer == 0xC5CF30FA28FE80F8)
                 //    Debugger.Break();
                 //if (kMer == 0xFFFFF6F003CFFFF4 && seq.Length == 860)
                 //    Debugger.Break();
 
                 // generate and sanity check all 4 possible following kMers 
-                int deepestDepth =  GetNextMerVariantsAndCounts(kMer << 2, kMerTable, kMerSize, kMerVariants, kMerVariantDepths);
-                viableAlternatives = CheckVariantViability(seq, seq.Length - kMerSize + 1, kMerSize, kMerVariants, kMerVariantDepths, runningMeanDepth, minDepthForRead, lastAcceptedDepth, variantAlive, startingContexts, null, null, minViablePairIdx, out failureReason, log);
+                GetNextMerVariantsAndCounts(kMer << 2, kMerTable, kMerSize, kMerVariants, kMerVariantDepths);
+                viableAlternatives = CheckVariantViability(seq, seq.Length - kMerSize + 1, kMerSize, kMerVariants, kMerVariantDepths, runningMeanDepth, minDepthForRead, lastAcceptedDepth, variantAlive, startingContexts, null, null, minViableContextIdx, out failureReason, log);
 
                 //if (kMer == 0x3C49FCF1FF3CDFC5 && viableAlternatives > 1)
                 //    Debugger.Break();
@@ -5946,47 +6022,43 @@ namespace Kelpie
                 if (viableAlternatives == 1)
                 {
                     chosenIdx = FindChosenVariant(variantAlive);
-                    pairSizeStats[statsSingleIdx]++;
+                    contextLengthStats[statsSingleIdx]++;
                 }
 
-                // no obvious next base so check the alternatives for pair support (longer kMers)
-                // trying to choose between alternatives now rather than finding and culling non-viable alternatives
-                int lastPairSizeChecked = 0;
+                // no obvious next base so check the alternatives for context support (longer kMers)
+                // at least one minimum length context must be found
+                int lastContextLengthChecked = 0;
 
                 if (viableAlternatives > 1)
                 {
-                    // iterate through the pair lengths, until we run out of pair support, get just one survivor, or get to the maximum pair length
-                    int pli = 0;
-                    // demand longer pairs once we're clear of starting reads
-                    if (seq.Length > longestReadLength)
-                        pli = 2;
-                    for (int i = 0; i < previousPairDepth.Count; i++)
-                        previousPairDepth[i] = 0;
-                    for (int i = 0; i < currentPairDepth.Count; i++)
-                        currentPairDepth[i] = 0;
-                    int minDepthForPair = meanPairDepth / 2;
-                    if (minDepthForPair == 0)
-                        minDepthForPair = 1;
-                    int previousBestPairCount = 0;
+                    for (int i = 0; i < previousContextDepth.Count; i++)
+                        previousContextDepth[i] = 0;
+                    for (int i = 0; i < currentContextDepth.Count; i++)
+                        currentContextDepth[i] = 0;
+                    int minDepthForContext = meanContextDepth / 2;
+                    if (minDepthForContext == 0)
+                        minDepthForContext = 1;
+                    int previousBestContextCount = 0;
 
-                    while (pli < kMerPairs.Count)
+                    // iterate through the context lengths, until we run out of context support, get just one survivor, or get to the maximum context length
+                    int pli = 0;
+                    // demand longer contexts once we're clear of starting reads (and if the minDepths look stable)
+                    if (seq.Length > longestReadLength && minDepthForRead > minDepthForContext)
+                        pli = 2;
+
+                    while (pli < kMerContexts.Count)
                     {
-                        int pairSize = pairSizes[pli];
-                        if (seq.Length < pairSize)
+                        int contextLength = contextLengths[pli];
+                        if (seq.Length < contextLength)
                             break;
 
-                        lastPairSizeChecked = pairSize;
+                        lastContextLengthChecked = contextLength;
 
-                        Dictionary<ulong, int> kMerPairsTable = kMerPairs[pairSize];
+                        Dictionary<ulong, int> kMerContextTable = kMerContexts[contextLength];
                         int previousViableAlternatives = viableAlternatives;
                         viableAlternatives = 0;
-                        int bestPairIdx = 0;
-                        int bestPairCount = 0;
-
-                        ulong initialMerInPair;
-                        bool pairPresent = false;
-                        // start of pair allows for the base that is being added (hence the +1)
-                        Sequence.CondenseMer(seq, seq.Length - pairSize + 1, kMerSize, out initialMerInPair);
+                        int bestContextIdx = 0;
+                        int bestContextCount = 0;
 
                         for (int b = 0; b < kMerVariants.Count; b++)
                         {
@@ -5994,64 +6066,66 @@ namespace Kelpie
 
                             if (variantAlive[b])
                             {
-                                ulong hashedPair = HashPair(initialMerInPair, kMerVariants[b], kMerSize);
-                                int pairCount;
-                                kMerPairsTable.TryGetValue(hashedPair, out pairCount);
-                                // remember the first pair count as 'previous'
-                                if (previousPairDepth[b] == 0)
-                                    previousPairDepth[b] = pairCount;
+                                // start of context allows for the base that is being added (hence the +1)
+                                ulong hashedVariantContext = HashContextVariant(seq, kMerSize, seq.Length - contextLength + 1, contextLength, kMerVariants[b]);
+                                int contextCount;
+                                kMerContextTable.TryGetValue(hashedVariantContext, out contextCount);
+                                // remember the first context count as 'previous'
+                                if (previousContextDepth[b] == 0)
+                                    previousContextDepth[b] = contextCount;
                                 // OK if (above min and didn't suddenly plunge) or close to the mean for the read anyway
-                                pairPresent = (pairCount >= minDepthForPair || Close(pairCount, runningMeanDepth));
+                                bool contextPresent = (contextCount >= minDepthForContext || Close(contextCount, runningMeanDepth));
 
-                                if (pairPresent)
+                                if (contextPresent)
                                 {
                                     viableAlternatives++;
                                     chosenIdx = b;
                                     variantAlive[b] = true;
-                                    currentPairDepth[b] = pairCount;
-                                    if (pairCount > bestPairCount)
+                                    currentContextDepth[b] = contextCount;
+                                    if (contextCount > bestContextCount)
                                     {
-                                        bestPairCount = pairCount;
-                                        bestPairIdx = b;
+                                        bestContextCount = contextCount;
+                                        bestContextIdx = b;
                                     }
                                 }
                                 else
                                 {
                                     variantAlive[b] = false;
-                                    currentPairDepth[b] = 0;
+                                    currentContextDepth[b] = 0;
                                 }
                             }
                         }
 
-                        // stop looking for pair matches if we've run out, or we've run into the noise level for pairs or the pair counts have stopped being fairly uniform
-                        if (viableAlternatives == 0 || bestPairCount <= minDepthForPair || (CloseToNoise(currentPairDepth[bestPairIdx], minDepthForPair) && !CloseOrHigher(currentPairDepth[bestPairIdx], previousPairDepth[bestPairIdx])))
+                        // stop looking for context matches if we've run out, or we've run into the noise level for contexts or the context counts have stopped being fairly uniform
+                        if (viableAlternatives == 0 || bestContextCount <= minDepthForContext || (CloseToNoise(currentContextDepth[bestContextIdx], minDepthForContext) && !CloseOrHigher(currentContextDepth[bestContextIdx], previousContextDepth[bestContextIdx])))
                         {
                             // restore the previous set of viable alternatives (if there was one)
-                            if (previousBestPairCount > 0)
+                            if (previousBestContextCount > 0)
                             {
                                 for (int b = 0; b < variantAlive.Count; b++)
                                     variantAlive[b] = variantPreviouslyAlive[b];
+
                                 viableAlternatives = previousViableAlternatives;
-                                break;
                             }
+                            break;
                         }
 
                         if (viableAlternatives == 1)
                         {
-                            // stopped at this pair-length with a single good next kMer
-                            pairSizeStats[pli + statsPairsIdx]++;   
+                            // stopped at this context-length with a single good next kMer
+                            contextLengthStats[pli + statsContextsIdx]++;
                             chosenIdx = FindChosenVariant(variantAlive);
                             break;
                         }
 
                         pli++;
-                        previousBestPairCount = bestPairCount;
+                        previousBestContextCount = bestContextCount;
                         for (int i = 0; i < kMerVariants.Count; i++)
-                            previousPairDepth[i] = currentPairDepth[i];
+                            previousContextDepth[i] = currentContextDepth[i];
                     }
                 }
 
-                // pairs check indicated that there were no good variants
+                // contexts check indicated that there were no good variants so abandon this extension attempt
                 if (viableAlternatives == 0)
                 {
                     meanDepthExtendedRead = runningMeanDepth;
@@ -6077,25 +6151,16 @@ namespace Kelpie
                     //if (kMerVariants[1] == 0xF127F3C7FCF37F15)
                     //    Debugger.Break();
 
-                    Sequence[] trialReads = new Sequence[4];
-                    string[] trialStartingReads = new string[4];
-                    int[] trialLengths = new int[4];
-                    HashSet<ulong>[] trialLoopTraps = new HashSet<ulong>[4];
-                    bool[] reachedTerminalPrimer = new bool[4];
-                    bool[] coinTossed = new bool[4];
-                    bool[] extensionAbandoned = new bool[4];
-                    int[] costOfExtension = new int[4];
-                    bool[] alreadyCached = new bool[4];
-                    int[] meanDepthOfExtension = new int[4];
-                    int[] avgDepthOfExtension = new int[4];
+                    Extension[] variantExtensions = new Extension[4];
                     int tpReachedCount = 0;
                     string reason = null;
+                    bool anyExtensionAbandoned = false;
 
                     cost = 1;
                     if (basesAdded <= 1)
                         cost = 2;
 
-                    pairSizeStats[statsDownstreamIdx]++;     // count how many times we needed to look downstream to resolve ambiguity
+                    contextLengthStats[statsDownstreamIdx]++;     // count how many times we needed to look downstream to resolve ambiguity
 
                     if (log != null && breakOnRead)
                         log.WriteLine(new string(' ', level * 4) + level + ": trialling @" + seq.Length + " (hm=" + runningMeanDepth + ", avg=" + runningAvgDepth + ", min=" + minDepthForRead + ") " + seq.ToString());
@@ -6104,65 +6169,57 @@ namespace Kelpie
                     // if multiple paths can reach a terminal primer at the same lowest cost, choose amongst these alternatives in proportion to their abundance
                     // as all of these paths are equally 'correct'... 
 
-                    bool anyExtensionAbandoned = false;
+                    // try the deepest path first - and if that gets to a terminal primer, use the length of this extended seqeunce to set an upper limit on laser extensions.
+                    // done to try to tame some aberrant tree explorations that are eventually abandoned anyway.
+                    int deepestvariantDepth = 0;
+                    int deepestVariantIdx = 0;
+                    for (int b = 0; b < 4; b++)
+                    {
+                        if (kMerVariantDepths[b] > deepestvariantDepth)
+                        {
+                            deepestvariantDepth = kMerVariantDepths[b];
+                            deepestVariantIdx = b;
+                        }
+                    }
+                    if (log != null && breakOnRead)
+                        log.WriteLine(new string(' ', level * 4) + level + ": " + "append " + bases[deepestVariantIdx] + "@" + seq.Length + " (" + kMerVariantDepths[deepestVariantIdx] + ", " + previousContextDepth[deepestVariantIdx] + ")");
+                    variantExtensions[deepestVariantIdx] = ExplorePossibleExtension(seq, bases[deepestVariantIdx], cachedExtensions, maxExtendedLength, longestReadLength, invDepthSum, depthSum,
+                                                                            kMerSize, kMerTable, startingContexts, contextLengths, minViableContextIdx, kMerContexts,
+                                                                            new HashSet<ulong>(loopTrap), extensionTerminatingPrimers, rvsPrimerHeadLength, primerCoreLength, readStats,
+                                                                            level, readNo, kMerVariantDepths[deepestVariantIdx], breakOnRead, contextLengthStats, log);
+                    if (variantExtensions[deepestVariantIdx].terminatingPrimerReached && maxExtendedLength == int.MaxValue)
+                        maxExtendedLength = variantExtensions[deepestVariantIdx].extendedSeq.Length + variantExtensions[deepestVariantIdx].extendedSeq.Length / 10;
 
                     for (int b = 0; b < 4; b++)
                     {
                         if (variantAlive[b])
                         {
-                            if (log != null && breakOnRead)
-                                log.WriteLine(new string(' ', level * 4) + level + ": " + "append " + bases[b] + "@" + seq.Length + " (" + kMerVariantDepths[b] + ", " + previousPairDepth[b] + ")");
-
-                            trialReads[b] = new Sequence(seq);
-                            trialReads[b].Append(bases[b]);
-                            trialStartingReads[b] = trialReads[b].ToString();
-                            trialLoopTraps[b] = new HashSet<ulong>(loopTrap);
-
-                            if (cachedExtensions.ContainsKey(trialStartingReads[b]))
+                            if (b != deepestVariantIdx)
                             {
-                                alreadyCached[b] = true;
-                                Extension cachedExtension = cachedExtensions[trialStartingReads[b]];
-                                trialReads[b] = cachedExtension.extendedSeq;
-                                reachedTerminalPrimer[b] = cachedExtension.terminatingPrimerReached;
-                                extensionAbandoned[b] = cachedExtension.extensionAbandoned;
-                                costOfExtension[b] = cachedExtension.costOfExtension;
-                                meanDepthOfExtension[b] = cachedExtension.meanDepth;
-                                avgDepthOfExtension[b] = cachedExtension.avgDepth;
-                                pairSizeStats[statsCachedBranch]++;
                                 if (log != null && breakOnRead)
-                                {
-                                    log.WriteLine(new string(' ', level * 4) + level + ": (cache@" + cachedExtension.cachedAtRead + ") " + "[" + bases[b] + "] " + " d=" + kMerVariantDepths[b] + " tp=" + reachedTerminalPrimer[b] +
-                                                                " cost=" + costOfExtension[b] + " md=" + meanDepthOfExtension[b] + " avg=" + avgDepthOfExtension[b] + " " + trialStartingReads[b] + " --> " + trialReads[b].ToString());
-                                }
-                            }
-                            else
-                            {
-                                alreadyCached[b] = false;
-                                trialReads[b] = ExtendRead(level + 1, trialReads[b], readNo, maxExtendedLength, longestReadLength, kMerSize, kMerTable, startingContexts, pairSizes, minViablePairIdx, kMerPairs, pairSizeStats, invDepthSum, depthSum,
-                                                           cachedExtensions, trialLoopTraps[b], extensionTerminatingPrimers, rvsPrimerHeadLength, primerCoreLength, readStats,
-                                                           out reachedTerminalPrimer[b], out coinTossed[b], out extensionAbandoned[b], out costOfExtension[b], out meanDepthOfExtension[b], out avgDepthOfExtension[b], log, breakOnRead);
-                                if (log != null && breakOnRead)
-                                    log.WriteLine(new string(' ', level * 4) + level + ": " + "extended " + "[" + bases[b] + "]" + " d=" + kMerVariantDepths[b] +
-                                        " tp=" + reachedTerminalPrimer[b] + " ct=" + coinTossed[b] + " ab=" + extensionAbandoned[b] + " cost=" + costOfExtension[b] + " md=" + meanDepthOfExtension[b] + " avg=" + avgDepthOfExtension[b] +
-                                        " " + trialReads[b].ToString());
+                                    log.WriteLine(new string(' ', level * 4) + level + ": " + "append " + bases[b] + "@" + seq.Length + " (" + kMerVariantDepths[b] + ", " + previousContextDepth[b] + ")");
+
+                                variantExtensions[b] = ExplorePossibleExtension(seq, bases[b], cachedExtensions, maxExtendedLength, longestReadLength, invDepthSum, depthSum,
+                                                                                kMerSize, kMerTable, startingContexts, contextLengths, minViableContextIdx, kMerContexts,
+                                                                                new HashSet<ulong>(loopTrap), extensionTerminatingPrimers, rvsPrimerHeadLength, primerCoreLength, readStats,
+                                                                                level, readNo, kMerVariantDepths[b], breakOnRead, contextLengthStats, log);
                             }
 
-                            trialLengths[b] = trialReads[b].Length;
-                            if (reachedTerminalPrimer[b])
+                            if (variantExtensions[b].terminatingPrimerReached)
                             {
                                 tpReachedCount++;
                                 chosenIdx = b;
                             }
-                            anyExtensionAbandoned |= extensionAbandoned[b];
+                            anyExtensionAbandoned |= variantExtensions[b].abandoned;
                         }
                     }
 
-                    // cache any extension that are safe to cache (tp reached without coin toss, or no tp but no recursive limits either)
+                    // cache any extensions that are safe to cache (tp reached without coin toss, or no tp but no recursive limits either)
                     for (int b = 0; b < 4; b++)
                     {
                         if (variantAlive[b])
                         {
-                            if (cacheThings && !alreadyCached[b] && !coinTossed[b] && !anyExtensionAbandoned)
+                            if (cacheThings && !variantExtensions[b].alreadyCached && !variantExtensions[b].coinTossed && !anyExtensionAbandoned)
                             {
                                 //if (trialStartingReads[b] == "AACGTAGGGGGCGAGCGTTGTCCGGAATTACTGGGCGTAAAGGGCGTGTAGGCGGCCTGGCAAGTCAGATGTGAAAAACCCCGGCTTAACCGGGGGCATGCATTTGAAACTGCCGGGCTTG")
                                 //{
@@ -6176,23 +6233,16 @@ namespace Kelpie
                                 //    Debugger.Break();
                                 //}
 
-                                Extension cachedExtension = new Extension();
-                                cachedExtension.extendedSeq = trialReads[b];
-                                cachedExtension.terminatingPrimerReached = reachedTerminalPrimer[b];
-                                cachedExtension.extensionAbandoned = extensionAbandoned[b];
-                                cachedExtension.costOfExtension = costOfExtension[b];
-                                cachedExtension.cachedAtRead = readNo;
-                                cachedExtension.meanDepth = meanDepthOfExtension[b];
-                                cachedExtension.avgDepth = avgDepthOfExtension[b];
-                                cachedExtensions.Add(trialStartingReads[b], cachedExtension);
+                                cachedExtensions.Add(variantExtensions[b].startingRead, variantExtensions[b]);
 
                                 //if (trialStartingReads[b] == "GCCGCGGTAATACGTAGGGGGCAAGCGTTATCCGGAATTACTGGGCGTAAAGGGTGCGTAGGCGGCTAGTTAAGTCGAGGTTAAAAGGCAGTAGCTCAACTACTGTTGGGCCTTGAAACTAATTAGCTTGAGTATAGGAGAGGAAAGTGGAATTCCCGGTGTAGCGGTGAAATGCGTAGATATCGGGAGGAAT")
                                 //    Debugger.Break();
 
                                 if (log != null && breakOnRead)
                                 {
-                                    log.WriteLine(new string(' ', level * 4) + level + ": +cache+ " + "[" + bases[b] + "]" + " tp=" + reachedTerminalPrimer[b] + " d=" + kMerVariantDepths[b] + " ct=" + coinTossed[b] +
-                                                  " ab=" + extensionAbandoned[b] + " cost=" + costOfExtension[b] + " md=" + meanDepthOfExtension[b] + " avg=" + avgDepthOfExtension[b] + " " + trialStartingReads[b] + " --> " + trialReads[b].ToString());
+                                    log.WriteLine(new string(' ', level * 4) + level + ": +cache+ " + "[" + bases[b] + "]" + " tp=" + variantExtensions[b].terminatingPrimerReached + " d=" + kMerVariantDepths[b] + " ct=" + variantExtensions[b].coinTossed +
+                                                  " ab=" + variantExtensions[b].abandoned + " cost=" + variantExtensions[b].cost + " md=" + variantExtensions[b].meanDepth + " avg=" + variantExtensions[b].avgDepth + " " +
+                                                  variantExtensions[b].startingRead + " --> " + variantExtensions[b].extendedSeq.ToString());
                                 }
                             }
                         }
@@ -6210,7 +6260,7 @@ namespace Kelpie
                     {
                         if (log != null)
                             reason = "1tp";
-                        pairSizeStats[statsSingleDSTIdx]++;
+                        contextLengthStats[statsSingleDSTIdx]++;
                     }
 
                     // multiple good choices...
@@ -6222,7 +6272,7 @@ namespace Kelpie
                         int closeVariantIdx = 0;
                         for (int b = 0; b < kMerVariants.Count; b++)
                         {
-                            if (reachedTerminalPrimer[b])
+                            if (variantAlive[b] && variantExtensions[b].terminatingPrimerReached)
                             {
                                 int distance = Math.Abs(kMerVariantDepths[b] - lastAcceptedDepth);
                                 if (distance < closestVariantDistance)
@@ -6244,13 +6294,13 @@ namespace Kelpie
                         int countAtMinCost = 0;
 
                         for (int b = 0; b < 4; b++)
-                            if (reachedTerminalPrimer[b])
+                            if (variantAlive[b] && variantExtensions[b].terminatingPrimerReached)
                             {
-                                if (costOfExtension[b] == minCost)
+                                if (variantExtensions[b].cost == minCost)
                                     countAtMinCost++;
-                                if (costOfExtension[b] < minCost)
+                                if (variantExtensions[b].cost < minCost)
                                 {
-                                    minCost = costOfExtension[b];
+                                    minCost = variantExtensions[b].cost;
                                     minCostIdx = b;
                                     countAtMinCost = 1;
                                 }
@@ -6263,7 +6313,7 @@ namespace Kelpie
 
                             if (log != null)
                                 reason = "cost";
-                            pairSizeStats[statsCostIdx]++;
+                            contextLengthStats[statsCostIdx]++;
                         }
                     }
 
@@ -6276,11 +6326,11 @@ namespace Kelpie
                         int tpcIdx = 0;
                         // only going to choose amongst TP paths
                         for (int b = 0; b < 4; b++)
-                            if (reachedTerminalPrimer[b])
+                            if (variantAlive[b] && variantExtensions[b].terminatingPrimerReached)
                             {
-                                totalTPCounts += avgDepthOfExtension[b];
+                                totalTPCounts += variantExtensions[b].avgDepth;
                                 // cumulative counts
-                                tpCounts[tpcIdx] = avgDepthOfExtension[b];
+                                tpCounts[tpcIdx] = variantExtensions[b].avgDepth;
                                 if (tpcIdx != 0)
                                     tpCounts[tpcIdx] += tpCounts[tpcIdx - 1];
                                 // track which path this TP extension came from
@@ -6301,12 +6351,12 @@ namespace Kelpie
                                 break;
                             }
                         tossedCoin = true;
-                        pairSizeStats[statsRolledIdx]++;
+                        contextLengthStats[statsRolledIdx]++;
                         if (log != null)
                         {
                             reason = "toss[";
                             for (int b = 0; b < 4; b++)
-                                if (reachedTerminalPrimer[b])
+                                if (variantAlive[b] && variantExtensions[b].terminatingPrimerReached)
                                     reason += kMerVariantDepths[b] + ",";
                             reason = reason.Substring(0, reason.Length - 1) + "]";
                         }
@@ -6322,21 +6372,21 @@ namespace Kelpie
 
                         for (int b = 0; b < 4; b++)
                         {
-                            if (variantAlive[b] && trialLengths[b] > longestExtension)
+                            if (variantAlive[b] && variantExtensions[b].extendedSeq.Length > longestExtension)
                             {
-                                longestExtension = trialLengths[b];
+                                longestExtension = variantExtensions[b].extendedSeq.Length;
                                 longestIdx = b;
                             }
                         }
 
                         chosenIdx = longestIdx;
-                        pairSizeStats[statsLongestIdx]++;         // chose longest
+                        contextLengthStats[statsLongestIdx]++;         // chose longest
                         if (log != null)
                         {
                             reason = "longest[";
                             for (int b = 0; b < 4; b++)
                                 if (variantAlive[b])
-                                    reason += trialLengths[b] + ",";
+                                    reason += variantExtensions[b].extendedSeq.Length + ",";
                             reason = reason.Substring(0, reason.Length - 1) + "]";
                         }
                     }
@@ -6347,20 +6397,20 @@ namespace Kelpie
                     if (log != null && breakOnRead)
                     {
                         log.WriteLine(new string(' ', level * 4) + level + "@" + seq.Length + ": " + "explored - chose (" + reason + ") " + bases[chosenIdx] +
-                                      " d=" + kMerVariantDepths[chosenIdx] + " ct=" + coinTossed[chosenIdx] + " ab=" + extensionAbandoned[chosenIdx] +
-                                      " tp=" + reachedTerminalPrimer[chosenIdx] + " cost=" + costOfExtension[chosenIdx] + " md=" + meanDepthOfExtension[chosenIdx] + " avg=" + avgDepthOfExtension[chosenIdx]);
+                                      " d=" + kMerVariantDepths[chosenIdx] + " ct=" + variantExtensions[chosenIdx].coinTossed + " ab=" + variantExtensions[chosenIdx].abandoned +
+                                      " tp=" + variantExtensions[chosenIdx].terminatingPrimerReached + " cost=" + variantExtensions[chosenIdx].cost + " md=" + variantExtensions[chosenIdx].meanDepth + " avg=" + variantExtensions[chosenIdx].avgDepth);
                         if (level == 1)
-                            log.WriteLine("extended (" + trialReads[chosenIdx].Length + ") " + trialReads[chosenIdx].ToString());
+                            log.WriteLine("extended (" + variantExtensions[chosenIdx].extendedSeq.Length + ") " + variantExtensions[chosenIdx].extendedSeq.ToString());
                     }
 
                     // and exit here as the chosen TrialRead will also be the chosen extended read - thanks to the magic of recursion
-                    seq = trialReads[chosenIdx];
-                    terminatingPrimerReached = reachedTerminalPrimer[chosenIdx];
-                    tossedCoin = tossedCoin | coinTossed[chosenIdx];
+                    seq = variantExtensions[chosenIdx].extendedSeq;
+                    terminatingPrimerReached = variantExtensions[chosenIdx].terminatingPrimerReached;
+                    tossedCoin = tossedCoin | variantExtensions[chosenIdx].coinTossed;
                     abandoned = anyExtensionAbandoned;
-                    cost += costOfExtension[chosenIdx];
-                    meanDepthExtendedRead = meanDepthOfExtension[chosenIdx];
-                    avgDepthExtendedRead = avgDepthOfExtension[chosenIdx];
+                    cost += variantExtensions[chosenIdx].cost;
+                    meanDepthExtendedRead = variantExtensions[chosenIdx].meanDepth;
+                    avgDepthExtendedRead = variantExtensions[chosenIdx].avgDepth;
                     break;
                 }
 
@@ -6417,38 +6467,75 @@ namespace Kelpie
             return seq;
         }
 
-        private static int GetMeanPairDepth(Sequence seq, ulong kMer, int kMerSize, List<int> pairLengths, Dictionary<int, Dictionary<ulong, int>> kMerPairsTable)
+        private static Extension ExplorePossibleExtension(Sequence seq, char nextBase, Dictionary<string, Extension> cachedExtensions, int maxExtendedLength, int longestReadLength, double invDepthSum, int depthSum,
+                                                          int kMerSize, Dictionary<ulong, int> kMerTable, Dictionary<int, HashSet<ulong>> startingContexts,
+                                                          List<int> contextLengths, int minViableContextIdx, Dictionary<int, Dictionary<ulong, int>> kMerContexts,
+                                                          HashSet<ulong> loopTrap, HashSet<ulong>[] extensionTerminatingPrimers, int rvsPrimerHeadLength, int primerCoreLength, ReadStats readStats,
+                                                          int level, int readNo, int depth, bool breakOnRead, int[] contextLengthStats, StreamWriter log)
         {
-            double invPairDepthSum = 0.0;
-            int pairCount = 0;
-            int meanPairDepth = 0;
+            Extension extension;
 
-            for (int p = 0; p < pairLengths.Count; p++)
+            Sequence startingSeq = new Sequence(seq);
+            startingSeq.Append(nextBase);
+            string startingRead = startingSeq.ToString();
+
+            if (cachedExtensions.ContainsKey(startingRead))
             {
-                int pairLength = pairLengths[p];
-                if (pairLength > seq.Length)
+                extension = cachedExtensions[startingRead];
+                extension.alreadyCached = true;
+                contextLengthStats[statsCachedBranch]++;
+                if (log != null && breakOnRead)
+                    log.WriteLine(new string(' ', level * 4) + level + ": (cache@" + extension.cachedAtRead + ") " + "[" + nextBase + "] " + " d=" + depth + " tp=" + extension.terminatingPrimerReached +
+                                                " cost=" + extension.cost + " md=" + extension.meanDepth + " avg=" + extension.avgDepth + " " + startingRead + " --> " + extension.extendedSeq.ToString());
+            }
+            else
+            {
+                extension = new Extension();
+                extension.alreadyCached = false;
+                extension.startingRead = startingRead;
+
+                extension.extendedSeq = ExtendRead(level + 1, startingSeq, readNo, maxExtendedLength, longestReadLength, kMerSize, kMerTable, startingContexts, contextLengths, minViableContextIdx, kMerContexts, contextLengthStats, invDepthSum, depthSum,
+                                                   cachedExtensions, loopTrap, extensionTerminatingPrimers, rvsPrimerHeadLength, primerCoreLength, readStats,
+                                                   out extension.terminatingPrimerReached, out extension.coinTossed, out extension.abandoned, out extension.cost, out extension.meanDepth, out extension.avgDepth, log, breakOnRead);
+                if (log != null && breakOnRead)
+                    log.WriteLine(new string(' ', level * 4) + level + ": " + "extended " + "[" + nextBase + "]" + " d=" + depth +
+                        " tp=" + extension.terminatingPrimerReached + " ct=" + extension.coinTossed + " ab=" + extension.abandoned + " cost=" + extension.cost + " md=" + extension.meanDepth + " avg=" + extension.avgDepth +
+                        " " + extension.extendedSeq.ToString());
+            }
+
+            return extension;
+        }
+
+        private static int GetMeanContextDepth(Sequence seq, ulong kMer, int kMerSize, List<int> contextLengths, Dictionary<int, Dictionary<ulong, int>> kMerContexts)
+        {
+            double invcontextDepthSum = 0.0;
+            int contextCount = 0;
+            int meancontextDepth = 0;
+
+            for (int p = 0; p < contextLengths.Count; p++)
+            {
+                int contextLength = contextLengths[p];
+                if (contextLength > seq.Length)
                     break;
 
-                int startOfPair = seq.Length - pairLength;
-                ulong initialMerInPair;
-                Sequence.CondenseMer(seq, startOfPair, kMerSize, out initialMerInPair);
-                ulong hashedPair = HashPair(initialMerInPair, kMer, kMerSize);
-                int pairDepth;
-                kMerPairsTable[pairLengths[p]].TryGetValue(hashedPair, out pairDepth);
+                int startOfContext = seq.Length - contextLength;
+                ulong hashedContext = HashContextVariant(seq, kMerSize, startOfContext, contextLength, kMer);
+                int contextDepth;
+                kMerContexts[contextLengths[p]].TryGetValue(hashedContext, out contextDepth);
 
-                if (pairDepth > 0)
+                if (contextDepth > 0)
                 {
-                    invPairDepthSum += 1.0 / (double)pairDepth;
-                    pairCount++;
+                    invcontextDepthSum += 1.0 / (double)contextDepth;
+                    contextCount++;
                 }
                 else
                     break;
             }
 
-            if (pairCount > 0)
-                meanPairDepth = (int)((double)pairCount / invPairDepthSum);
+            if (contextCount > 0)
+                meancontextDepth = (int)((double)contextCount / invcontextDepthSum);
 
-            return meanPairDepth;
+            return meancontextDepth;
         }
 
         private static int FindChosenVariant(List<bool> variantAlive)
@@ -6462,7 +6549,7 @@ namespace Kelpie
 
         // fast check to cull non-viable alternative kMers
         private static int CheckVariantViability(Sequence seq, int m, int kMerSize, List<ulong> kMerVariants, List<int> kMerVariantDepths, int meanDepthForRead, int minDepthForRead, int lastAcceptedDepth, List<bool> variantAlive,
-                                                 Dictionary<int, HashSet<ulong>> startingContexts, Dictionary<int, Dictionary<ulong, int>> kMerPairs, List<int> pairSizes, int minViablePairIdx, out string failureReason, StreamWriter log)
+                                                 Dictionary<int, HashSet<ulong>> startingContexts, Dictionary<int, Dictionary<ulong, int>> kMerContexts, List<int> contextLengths, int minViableContextIdx, out string failureReason, StreamWriter log)
         {
             int viableAlternatives = 0;
             failureReason = null;
@@ -6496,41 +6583,37 @@ namespace Kelpie
             if (viableAlternatives == 0 && log != null)
                 failureReason = "no next";
 
-            // don't try for pairs or contexts if all the variants are low depth
+            // don't try for contexts if all the variants are low depth
             if (CloseOrLower(maxVariantDepth, minDepthForRead))
                 return viableAlternatives;
 
-            if (viableAlternatives > 1 && kMerPairs != null)
+            if (viableAlternatives > 1 && kMerContexts != null)
             {
-                // check the viable alternatives for short pair support as well
-                int pairIdx = 0;
-                int minDepthForPair = minDepthForRead / 2;
+                // check the viable alternatives for short context support as well
+                int contextIdx = 0;
+                int minDepthForContext = minDepthForRead / 2;
 
                 while (viableAlternatives >= 1)
                 {
-                    int pairSize = pairSizes[pairIdx];
-                    Dictionary<ulong, int> kMerPairsTable = kMerPairs[pairSize];
-                    int startOfPair = m + kMerSize - pairSize;
+                    int contextLength = contextLengths[contextIdx];
+                    Dictionary<ulong, int> kMerContextsTable = kMerContexts[contextLength];
+                    int startOfContext = m + kMerSize - contextLength;
 
-                    if (startOfPair < 0)
+                    if (startOfContext < 0)
                         break;
 
                     viableAlternatives = 0;
-
-                    ulong initialMerInPair;
-
-                    Sequence.CondenseMer(seq, startOfPair, kMerSize, out initialMerInPair);
 
                     for (int b = 0; b < kMerVariants.Count; b++)
                     {
                         if (variantAlive[b])
                         {
-                            ulong hashedPair = HashPair(initialMerInPair, kMerVariants[b], kMerSize);
-                            int pairCount;
-                            kMerPairsTable.TryGetValue(hashedPair, out pairCount);
-                            bool pairPresent = pairCount > minDepthForPair || Close(kMerVariantDepths[b], meanDepthForRead);
+                            ulong hashedContext = HashContextVariant(seq, kMerSize, startOfContext, contextLength, kMerVariants[b]);
+                            int contextCount;
+                            kMerContextsTable.TryGetValue(hashedContext, out contextCount);
+                            bool contextPresent = contextCount > minDepthForContext;
 
-                            if (pairPresent)
+                            if (contextPresent)
                             {
                                 viableAlternatives++;
                             }
@@ -6543,19 +6626,19 @@ namespace Kelpie
                     }
 
                     if (viableAlternatives == 0 && log != null)
-                        failureReason = "minPair";
+                        failureReason = "minContext";
 
                     if (viableAlternatives == 1)
                         break;
 
-                    pairIdx++;
-                    if (pairIdx > minViablePairIdx)
+                    contextIdx++;
+                    if (contextIdx > minViableContextIdx)
                         break;
                 }
             }
 
             // still have multiple alternatives - if we're dealing with a (short) starting read we can check the starting contexts
-            // this check only excludes variants if at least one variant found to have a starting context
+            // this check only excludes variants if at least one variant is found to have a starting context
             if (viableAlternatives >= 1 && startingContexts != null)
             {
                 int contextLength = m + kMerSize;
@@ -6623,30 +6706,19 @@ namespace Kelpie
         // Find a kMer in the canonical kMer table.
         private static int kMerTableLookup(ulong kMer, Dictionary<ulong, int> kMerTable, int kMerSize)
         {
-            int count = 0;
             kMer = Canonical(kMer, kMerSize);
 
-            kMerTable.TryGetValue(kMer, out count);
+            kMerTable.TryGetValue(kMer, out int count);
 
             return count;
         }
 
         // debug method
-        public static ulong GetPairFromSeq(string seq, int kMerSize)
+        public static ulong GetContextFromSeq(string seq, int kMerSize)
         {
-            ulong firstMer = kMers.CondenseMer(seq.Substring(0, kMerSize));
-            ulong secondMer = kMers.CondenseMer(seq.Substring(seq.Length - kMerSize));
+            ulong hashedContext = HashContext(new Sequence(seq), kMerSize, 0, seq.Length);
 
-            return HashPair(firstMer, secondMer, kMerSize);
-        }
-
-        // debug method
-        public static ulong GetEndPairFromSeq(string seq, int kMerSize)
-        {
-            ulong firstMer = kMers.CondenseMer(seq.Substring(0, kMerSize));
-            ulong secondMer = kMers.CondenseMer(seq.Substring(seq.Length - kMerSize));
-
-            return firstMer ^ secondMer;
+            return hashedContext;
         }
 
         private static int GetDeepestVariantDepth(VariantsWanted vw, ulong kMer, Dictionary<ulong, int> kMerTable, int kMerSize, List<ulong> kMerVariants, List<int> kMerVariantDepths, int noiseLevel)
@@ -6684,10 +6756,13 @@ namespace Kelpie
 
     public class Extension
     {
+        public string startingRead;
         public Sequence extendedSeq;
         public bool terminatingPrimerReached;
-        public bool extensionAbandoned;
-        public int costOfExtension;
+        public bool abandoned;
+        public int cost;
+        public bool coinTossed;
+        public bool alreadyCached;
         public int cachedAtRead;
         public int meanDepth;
         public int avgDepth;

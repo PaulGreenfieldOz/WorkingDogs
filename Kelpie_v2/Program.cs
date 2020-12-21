@@ -5121,7 +5121,7 @@ namespace Kelpie
             int stillShortStartingReadsTotal = 0;
             int uncleanStartingReadsTotal = 0;
 
-            int partitionsToUse = Math.Min(1, Environment.ProcessorCount - 1);
+            int partitionsToUse = Math.Max(1, Environment.ProcessorCount - 1);
             int startingPartitionSize = readsWithStartingPrimers.Count / partitionsToUse;
             List<int> startingPartitionStarts = new List<int>();
             List<int> startingPartitionEnds = new List<int>();
@@ -5808,7 +5808,7 @@ namespace Kelpie
             int readsExtendedProgress = 0;
             Stopwatch sw = new Stopwatch();
 
-            int reportingInterval = Math.Min(1, startingReads.Count / 10);
+            int reportingInterval = Math.Max(1, startingReads.Count / 10);
 
             // convert the minReadLength to the max context length that will fit inside such as short read (index)
             int minViableContextIdx = 0;

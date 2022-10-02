@@ -1,4 +1,4 @@
-WorkingDogs
+### WorkingDogs
 
 The home repo for the Working Dogs bioinformatics tools: Blue, Pup, Kelpie and other members of the pack. These tools are all kMer-based and make use of the very useful almost-always-unique properties of moderate-length kMers (k=20+).
 

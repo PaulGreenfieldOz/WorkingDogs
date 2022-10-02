@@ -1,4 +1,4 @@
-WorkingDogs
+### WorkingDogs
 
 The home repo for the Working Dogs bioinformatics tools: Blue, Pup, Kelpie and other members of the pack. These tools are all kMer-based and make use of the very useful almost-always-unique properties of moderate-length kMers (k=20+).
 
@@ -18,4 +18,4 @@ very low abundance sequences have also been improved.
 FilterReads is a boringly-named kMer filter than can rapidly find reads of interest in very large datasets. Given a 16S filter, it produces results very similar to HMM-based
 tools, but runs at close to IO speed.
 
-Other kMer-based bioiformatics tool will join the pack from time to time.
+Other kMer-based bioinformatics tool will join the pack from time to time. The GHAP amplicon pipeline will appear soon, and Pup will make its appearance soon too.

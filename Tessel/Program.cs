@@ -21,7 +21,7 @@ namespace Tessel
         // Tessel  -k 25 -g 6000000 -t 4 CsporParamTest s_1_sequence_merged.fastq
         // -k 25 -g 60000000 -t 16 -min 1  -tmp g:\temp\ TesselTest-16 s_1_?_sequence.fastq
 
-        const string version = "2.1.2";                         // version - update on every significant change
+        const string version = "2.2.0";                         // version - update on every significant change
 
         static Stopwatch timeSpentFilling = new Stopwatch();
         static TimeSpan timeSpentSorting = TimeSpan.Zero;
@@ -29,7 +29,8 @@ namespace Tessel
 
         // progress monitors
         const int reportInterval = 60000;           // report back at this interval (ms)
-        static bool stopMonitor = false;            // tell monitor thread to finish
+        static bool stopReporter = false;           // tell monitor thread to finish
+        static ManualResetEvent signalReporter = new ManualResetEvent(false);
 
         // current statistics
         enum phases
@@ -74,7 +75,7 @@ namespace Tessel
         {
             if (args.Length == 0)
             {
-                // Tessel -k k-merLength -g genomeLength [-t #threads] [-f fasta|fastq] [-pairs|-nopairs] [-trim nn] [-trimQual nn] [-tmp tempDir] [-min minCount] [-s] cbtName readsFN... or readsPattern
+                // Tessel -k k-merLength -g genomeLength [-t #threads] [-pairs|-nopairs] [-trim nn] [-trimQual nn] [-tmp tempDir] [-min minCount] [-s] cbtName readsFN... or readsPattern
                 WriteUsage();
                 return;
             }
@@ -467,13 +468,7 @@ namespace Tessel
             }
 
             // always use the format from the first file (-f option is ignored, and only kept for compatibility)
-            StreamReader formatTester = new StreamReader(readsFNs[0]);
-            string firstLine = formatTester.ReadLine();
-            if (firstLine[0] == '>')
-                readsFormat = SeqFiles.formatFNA;
-            if (firstLine[0] == '@')
-                readsFormat = SeqFiles.formatFASTQ;
-            formatTester.Close();
+            readsFormat = SeqFiles.DetermineFileFormat(readsFNs[0]);
 
             if (trimQual > 0 && readsFormat != SeqFiles.formatFASTQ)
             {
@@ -718,7 +713,7 @@ namespace Tessel
                                                   int minCount, kMerTable kMersTable, MerCollections.PairTable pairsTable, ThreadStats tesselStats)
         {
             Console.WriteLine("Generating pairs from " + readsFN);
-            StreamReader reads = new StreamReader(readsFN, Encoding.ASCII, false, 1000000);
+            StreamReader reads = SeqFiles.OpenSeqStream(readsFN);
             BufferedReader bufferedReads = new BufferedReader(readsFormat, reads, null);
 
             PairCountingThreadParams[] countingParams = new PairCountingThreadParams[noThreads];
@@ -856,8 +851,7 @@ namespace Tessel
         {
             string readsFN = readsFNs[fileNo];
             Console.WriteLine("Reading and tiling " + readsFN);
-            StreamReader reads = new StreamReader(new FileStream(readsFN, FileMode.Open, FileAccess.Read, FileShare.Read, readBufferSize, FileOptions.SequentialScan), Encoding.ASCII);
-            //StreamReader reads = new StreamReader(readsFN, Encoding.ASCII, false, 1000000);
+            StreamReader reads = SeqFiles.OpenSeqStream(readsFN);
             BufferedReader bufferedReads = new BufferedReader(readsFormat, reads, null);
             fileNo++;
 
@@ -1053,8 +1047,8 @@ namespace Tessel
 
         private static void StopMonitorThread(Thread monitorProgress)
         {
-            stopMonitor = true;
-            monitorProgress.Abort();
+            stopReporter = true;
+            signalReporter.Set();
             monitorProgress.Join();
         }
         
@@ -2510,9 +2504,11 @@ namespace Tessel
             long lastReadsRead = 0;
             bool startedPairPhase = false;
 
-            while (!stopMonitor)
+            while (true)
             {
-                Thread.Sleep(reportInterval);
+                signalReporter.WaitOne(reportInterval);
+                if (stopReporter)
+                    break;
 
                 if (programPhase == phases.tilingMers)
                 {

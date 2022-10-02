@@ -21,6 +21,9 @@ As of v2.1, Tessel has subsumed the GenerateMerPairs program and, by default, wi
 are pairs of short kMers, separated by a gap, and are effectively longer kMers. They are used by Blue to
 partially resolve the ambiguity that comes from using shorter kMers.
 
+v2.2 is the result of porting Tessel to the .NET platform. The only significant change in this release is that Tessel can now process gzipped sequence data files 
+directly. 
+
 Tessel is a command-line program with the following cryptic usage hint:  
 ```
 Tessel -k kMerLength -g genomeLength [-t #threads] [-tmp tempDir] [-min minCount] [-trim nn] [-trimQual nn] [-s] [-pairs] [-nopairs] [-canonical|asread] [-text textFN] [-textFormat pairs|sum|faPairs|faSum] cbtName readsFN... or readsPattern
@@ -29,7 +32,7 @@ Tessel -k kMerLength -g genomeLength [-t #threads] [-tmp tempDir] [-min minCount
 A typical run of Tessel is something like… 
 
 `
-Tessel -k 25 -g 10000000 -t 16 -tmp /tmp/DH10B -min 2 -trimqual 30 DH10B MiSeq_Ecoli_DH10B_110721_PF_R?_paired.fastq  
+Tessel -k 25 -g 10M -t 16 -tmp /tmp/DH10B -min 2 -trimqual 30 DH10B MiSeq_Ecoli_DH10B_110721_PF_R?_paired.fastq  
 `  
 
 …which will tile whatever files match MiSeq_Ecoli_DH10B_110721_PF_R?_paired.fastq for 25-mers and write out a file of all the distinct
@@ -81,30 +84,28 @@ The 'pairs' file format is similar:
 ... The int32 is the number of times the corresponding kMer pair was seen. 
 
 
-Tessel is written in C# and is provided pre-compiled for Windows, OSX and common Linux variants. These pre-compiled code files 
-should be stand-alone and should not require the installation of any additional run-time libraries. 
+Tessel is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
+are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
+files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. Tessel is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
 
-You can compile Tessel yourself using Mono (under OSX and Linux), or under Visual Studio on Windows. You’ll need the mono-devel 
-package installed on Linux or OSX. 
+You can compile Tessel yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
+The Tessel code itself is in Program.cs in this directory, and you'll also need to download the files
+in WorkingDocsCoreLibrary. Tessel can be built as 'frame-work dependent' code or as 
+standalone code (AOT) with necessary run-time code linked into the Tessel executable. The AOT code will run on systems that do not have the 
+.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
 
+The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
+build Tessel executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
+parts of the platform run-time are linked into the executables. Pre-built Tessel code is provided for Windows and Linux, and 
+.NET SDKs are available that will allow Tessel to be built for both x64 and ARM macOS systems. The Linux code has been built on 
+Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
 
-The Tessel code itself is in Program.cs, MerCollections.cs, MerTables.cs and PairTable.cs in this directory, and you'll also need to 
-download kMers.cs, kMerPairs.cs, kMerCollections.cs, kMerTables.cs, SeqFiles.cs and Sequence.cs 
-from WorkingDogsCoreLibrary. One simple way of compiling Tessel (if you need to) is to make a directory containing these 10 .cs files
-and then run `csc /out:Tessel.exe /target:exe *.cs` from this directory. Earlier versions of mono use ‘msc’ rather than ‘csc’ but 
-the syntax of the compilation command is the same. The C# compiler will produce the executable Tessel.exe. This code file can be run
-natively on Windows or via 'mono Tessel' or after using 'mkBundle' on other platforms. 
+The command `dotnet publish ./Tessel.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+framework-dependent x64 Linux Tessel executable, and other versions can be built by changing the name of the profile file in the 
+publish command.
 
-The native Linux and OSX executables provided with the package were produced by cross-compiling Tessel.exe with mkbundle, 
-targeting various Linux and OSX releases. For example:  
-	`mkbundle -o ubuntu-18.04\Tessel Tessel.exe --simple --cross mono-5.12.0-ubuntu-18.04-x64`   
-You can also use mkbundle to generate a native executable for your current system. You’ll need to know where the mono-devel 
-installation put the machine.config and the mono libraries. 
-	`mkbundle -o Tessel --simple Tessel.exe --machine-config /etc/mono/4.5/machine.config -L /apps/mono/5.4.1.7/lib/mono/4.5`  
-The mkbundle command has been changing with recent mono releases, and you may need to try other variants, such as:
-	`mkbundle -o Tessel --cross default Tessel.exe`
-	
-It is expected that all use of mono will be replaced late in 2018 once .NET Core 3 arrives, with direct multi-platform code generation. 
 
 
 

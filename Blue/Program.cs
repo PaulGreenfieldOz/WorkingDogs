@@ -127,7 +127,7 @@ namespace Blue
 
     class Program
     {
-        const string version = "2.1.4";             // version - update on every significant change
+        const string version = "2.2.0";             // version - update on every significant change
 
         // internal performance analysis options
         const bool perfTrace = false;               // save performance stats for each read
@@ -135,7 +135,8 @@ namespace Blue
         // monitoring/reporting progress
         const int monitorInterval = 100;            // monitor thread progress at this interval
         const int reportInterval = 60000;           // report back at this interval (ms)
-        static bool stopMonitor = false;            // tell monitor thread to finish
+        static bool stopReporter = false;           // tell monitor thread to finish
+        static ManualResetEvent signalReporter = new ManualResetEvent(false);
         // rough (non-mutexed) stats for progress reporting
         static long progressReads = 0;              // how many reads have been processed so far
         static long progressHealedReads = 0;        // how many reads were healed
@@ -187,6 +188,7 @@ namespace Blue
         static int rewriteRegion = 20;              // length of region being checked for rewriting
 
         static ErrorModel errorModel = ErrorModel.mostlySubs;    // what type of data are we dealing with
+        static bool onlySubsAllowed = false;        // never try for indels (should be slightly less accurate but faster)
 
         // (default) reads are always trimmed of bad bases after correction and may be extended (while the next base is unambiguous) to either the starting length or longer
         static bool readsFixedLength = false;       // true -> reads are fixed length and should be the same length when written out. false -> reads lengths can change  
@@ -197,6 +199,7 @@ namespace Blue
         static int saveGoodMinLengthPct = 70;       // % of initial read that must have been 'good' after correction
         static int wantedReadLength = -1;           // trim reads to this length before correction
         static int minOKQual = 30;                  // poor/OK qual boundary used when determining whether we're now in the error-prone tail
+        static int balancedFactor = 10;             // how much a read pair need to be out of balance before being considered unbalanced
 
         static int readsFormat = SeqFiles.formatNone; // what format are the reads files (see MerString.formatXXX enumeration)
         // this will be set automatically by looking at the file names/content if not explicitly set by a parameter
@@ -392,6 +395,24 @@ namespace Blue
                         continue;
                     }
 
+                    if (args[p] == "-b" || args[p] == "-balanced")
+                    {
+                        if (!CheckForParamValue(p, args.Length, "balanced ratio expected after -b|-balanced"))
+                            return;
+                        try
+                        {
+                            balancedFactor = Convert.ToInt32(args[p + 1]);
+                        }
+                        catch
+                        {
+                            Console.WriteLine("expected a number for the -b|-balanced parameter: " + args[p + 1]);
+                            return;
+                        }
+                        p++;
+                        //Console.WriteLine("-balanced " + balancedFactor);
+                        continue;
+                    }
+
                     if (args[p] == "-l" || args[p] == "-length")
                     {
                         if (!CheckForParamValue(p, args.Length, "trimmed length expected after -l|-length"))
@@ -438,6 +459,13 @@ namespace Blue
                     {
                         errorModel = ErrorModel.indelsCommon;
                         //Console.WriteLine("-hp");
+                        continue;
+                    }
+
+                    if (args[p] == "-subsonly")
+                    {
+                        onlySubsAllowed = true;
+                        //Console.WriteLine("-subs");
                         continue;
                     }
 
@@ -857,15 +885,7 @@ namespace Blue
 
             // if we weren't told what format the reads are in, use the format from the first file 
             if (readsFormat == SeqFiles.formatNone)
-            {
-                StreamReader formatTester = new StreamReader(readsFNs[0]);
-                string firstLine = formatTester.ReadLine();
-                if (firstLine[0] == '>')
-                    readsFormat = SeqFiles.formatFNA;
-                if (firstLine[0] == '@')
-                    readsFormat = SeqFiles.formatFASTQ;
-                formatTester.Close();
-            }
+                readsFormat = SeqFiles.DetermineFileFormat(readsFNs[0]);
 
             // resolve the FASTQ qual ambiguity by reading through quals until one is encountered that can only come from either of the alternative sets
             if (readsFormat == SeqFiles.formatFASTQ)
@@ -918,7 +938,7 @@ namespace Blue
                     string fileSuffix = readsFN.Substring(readsFN.LastIndexOf('.'));
                     string fileWithoutSuffix = readsFN.Substring(0, readsFN.LastIndexOf('.'));
 
-                    readsFiles[f] = new StreamReader(fullReadsFN, Encoding.ASCII, false, 65536);
+                    readsFiles[f] = SeqFiles.OpenSeqStream(fullReadsFN);
                     bufferedReadsFiles[f] = new BufferedReader(readsFormat, readsFiles[f], qualFiles[f]);
 
                     Console.WriteLine("correcting " + fullReadsFN);
@@ -927,7 +947,7 @@ namespace Blue
                     {
                         string qualFN = fileWithoutSuffix + ".qual";
                         if (File.Exists(qualFN))
-                            qualFiles[f] = new StreamReader(qualFN);
+                            qualFiles[f] = SeqFiles.OpenSeqStream(qualFN);
                     }
 
                     string outputPath = outputDir == null ? readsPath + fnSeparator : outputDir;
@@ -1171,7 +1191,8 @@ namespace Blue
 
             //depthsTrace.Close();
 
-            stopMonitor = true;
+            stopReporter = true;
+            signalReporter.Set();
             monitorProgress.Join();
 
             //Console.WriteLine("seqs " + seqAllocated + ", " + "mp " + mpAllocated + ", depths " + depthsAllocated + ", vs " + vsAllocated + ", mv " + mvAllocated);
@@ -1606,7 +1627,7 @@ namespace Blue
             }
 
             const bool breakOnRead = false;            
-            if (breakOnRead && (originalRead.Matches("TTCCACCGGAGAAACGTAACCGGAAAGGAGAATGGCGGGCATCATAAAAACAAACACGCCGATAAACGCCTGCTGTTGTGTTGAACAGAGGGATGAAATCAACAGACCGAATCCCACCAGCGATAAAACATAAATCACCCTCGTAAAGTA") ||
+            if (breakOnRead && (originalRead.Matches("TAAATCTAATTGGTATAATATAATATATCAAACTAATAATTTAATATTAATTATTAGTTCGATTGTAGTAGTAGGTTCTGTAACAATTTTAGGATATAAA") ||
                                 readHeader.Matches("@SRR617721.7393796 SOLEXA4:20:D0V34ACXX:1:2114:5208:49282 length=101")))
             {
                 // force tracing for this read if we're not already tracing (but changing trace state is not threadsafe...)
@@ -1661,6 +1682,7 @@ namespace Blue
             SetPairDepths(read, readProps);
             // and calculate the target depths for this read 
             SetDepthThreshholds(readProps, readProps.merCount);
+            SetPairDepthThreshholds(readProps, readProps.merCount);
             // and see if needs healing
             readProps.initialReadState = CheckReadForProblems(read, readProps);
             // and set the marker for the noisy tail (where we don't try so hard when counting followers)
@@ -1732,6 +1754,7 @@ namespace Blue
                     SetMerDepths(read, readProps);
                     SetPairDepths(read, readProps);
                     SetDepthThreshholds(readProps, readProps.merCount);
+                    SetPairDepthThreshholds(readProps, readProps.merCount);
                     readProps.initialReadState = CheckReadForProblems(read, readProps);
 
                     // and remember for the stats
@@ -1767,6 +1790,7 @@ namespace Blue
                 {
                     // check read again with the updated thresholds
                     SetPairDepths(read, readProps);     // pairs were not maintained during correction
+                    SetPairDepthThreshholds(readProps, readProps.merCount);
                     readProps.finalReadState = CheckReadForProblems(read, readProps);
                     // but only concerned with errors... not putative correction opportunities
                     if (readProps.finalReadState == ReadState.readNeedsChecking)
@@ -1810,7 +1834,10 @@ namespace Blue
                 {
                     // pair depths aren't maintained so recreate them if the read has changed
                     if (readWasChanged)
+                    {
                         SetPairDepths(read, readProps);
+                        SetPairDepthThreshholds(readProps, readProps.merCount);
+                    }
 
                     for (int i = 0; i < readProps.pairsCount; i++)
                         if (readProps.depths[i] == 0 || readProps.pairDepths[i] == 0)
@@ -1931,7 +1958,10 @@ namespace Blue
             {
                 // when we get here, the kMers and depths will be set correctly but pair depths may be out-of-date
                 if (readWasChanged)
+                {
                     SetPairDepths(read, readProps);
+                    SetPairDepthThreshholds(readProps, readProps.merCount);
+                }
 
                 if (readProps.healingAbandoned && readProps.abandonedAtM > 0)
                 {
@@ -2410,7 +2440,7 @@ namespace Blue
             int initialMerCount = readProps.merCount;               // initial read length in kMers (used to stop reads growing)
             int initialReadLength = read.Length;                    // and starting length in bases (used to trim uncorrected ends)
             int tailOfRead = Math.Max((initialMerCount - 10), (initialMerCount * 90) / 100);   // tail of read is last 10% or 10
-            bool subFixesOnly = false;                              // set whenever it seems sensible to restrict fix types for performance reasons (e.g. high depth reads)
+            bool subFixesOnly = onlySubsAllowed;                    // set whenever it seems sensible to restrict fix types for performance reasons (e.g. high depth reads)
 
             int currentMerCount = initialMerCount;                  // how many mers are in the current being-healed read
             int previousMerDepth = -1;                              // depth of the previous mer examined/fixed in the scanning loop
@@ -2659,6 +2689,7 @@ namespace Blue
                             //readProps.merCount = saveMerCount;
                             //readProps.pairsCount = savePairCount;
                             SetDepthThreshholds(readProps, m+1);
+                            SetPairDepthThreshholds(readProps, readProps.merCount);
                             OKDepth = readProps.OKDepth;
                             minDepth = readProps.minDepth;
                             minPairDepth = readProps.minPairDepth;
@@ -2749,11 +2780,11 @@ namespace Blue
 
             } // for each mer in the read
 
-            int unreturned = 0;
-            foreach (kMerProperties mp in allocatedMerProperties)
-                unreturned++;
-            if (unreturned > 0)
-                Debugger.Break();
+            //int unreturned = 0;
+            //foreach (kMerProperties mp in allocatedMerProperties)
+            //    unreturned++;
+            //if (unreturned > 0)
+            //    Debugger.Break();
             allocatedMerProperties.Clear();
 
             // trim any unchecked/uncorrected bases from the end of the read (bases could have been added)
@@ -2923,8 +2954,8 @@ namespace Blue
 
         private static void ReturnSequence(Sequence thisSequence)
         {
-            if (thisSequence == null)
-                Debugger.Break();
+            //if (thisSequence == null)
+            //    Debugger.Break();
             freeSequences.Enqueue(thisSequence);
             //Interlocked.Decrement(ref seqAllocated);
         }
@@ -3141,7 +3172,7 @@ namespace Blue
                             readProps.hmZeroPresent = MerIsHomopolymer(lastMer);
                     }
 
-                    if (summedDepth >= requestedMinDepth && (plusCount < rcCount * 4 && rcCount < plusCount * 4))
+                    if (summedDepth >= requestedMinDepth && (plusCount < rcCount * balancedFactor && rcCount < plusCount * balancedFactor))
                     {
                         readProps.balancedDepths[i] = true;
                         balancedCount++;
@@ -3253,48 +3284,39 @@ namespace Blue
                     pairDepths[i] = 0;
             }
 
-            // if kMer depths are valid, cull any pairs formed from poor kMers
-            if (readProps.minDepth > 0)
-                CullPairDepths(pairsInRead, pairDepths, readProps.depths, readProps.minDepth);
-
             //spdTimer.Stop();
         }
 
-        private static void CullPairDepths(int pairsInRead, int[] pairDepths, int[] depths, int minDepth)
-        {
-            // index if starting base of the kMer at the end of the pair
-            int secondMerOffset = pairsTable.pairFullLength - merSize;
+        //private static void CullPairDepths(int pairsInRead, int[] pairDepths, int[] depths, int minDepthWanted, int maxDepthWanted)
+        //{
+        //    // index if starting base of the kMer at the end of the pair
+        //    int secondMerOffset = pairsTable.pairFullLength - merSize;
 
-            for (int i = 0; i < pairsInRead; i++)
-            {
-                if (pairDepths[i] == 0)
-                    continue;
+        //    for (int i = 0; i < pairsInRead; i++)
+        //    {
+        //        if (pairDepths[i] == 0)
+        //            continue;
 
-                int startingMerDepth = depths[i];
-                int endingMerDepth = depths[i + secondMerOffset];
+        //        int startingMerDepth = depths[i];
+        //        int endingMerDepth = depths[i + secondMerOffset];
 
-                if (startingMerDepth < minDepth || endingMerDepth < minDepth)
-                    pairDepths[i] = 0;
-            }
-        }
+        //        // don't count pairs that are based on kMers whose depth is too high or too low
+        //        if (startingMerDepth < minDepthWanted || endingMerDepth < minDepthWanted || startingMerDepth > maxDepthWanted || endingMerDepth > maxDepthWanted)
+        //            pairDepths[i] = 0;
+        //    }
+        //}
 
         // Determines whether the read needs healing and sets the initial 'good' (OKDepth) and 'passable' (minDepth) depth levels.
         private static void SetDepthThreshholds(ReadProperties readProps, int lengthToScan)
         {
             int noOKMers = 0;                       // no. of mers that are better than OK depth
-            int OKPairMean = 0;                     // and the same for the pairs
             int minDepth = 0;                       // minimum allowable depth (for 'any' follower
-            int noOKPairs = 0;                      // no. of pairs that are better than OK depth
             int OKMerMean = 0;                      // average of counts for these merss)
             int OKDepth = 0;                        // depth for 'good' followers and detecting places to try error correction
-            int minPairDepth = 0;                   // minimum depth allowed for a pair
-            int OKPairDepth = 0;                    // 'good' pair depth
             int lowestBalancedDepth = int.MaxValue; // lowest balanced kMer depth
 
             bool readUnbalanced = readProps.balancedMerCount < 1;
-            int pairsInRead = readProps.pairsCount;
             int[] merDepths = readProps.depths;
-            int[] pairDepths = readProps.pairDepths;
 
             // calculate the harmonic mean of the depth of the passable mers (for depth capping)
             double invDepthSum = 0.0;
@@ -3365,11 +3387,32 @@ namespace Blue
             minDepth = OKDepth / 2;                                     // and 'min' to 1/2 of this OK level *** check ***
             if (minDepth > lowestBalancedDepth)
                 minDepth = lowestBalancedDepth - 1;                     // never set acceptable/bad boundary higher than the lowest balanced kMer
-            /*
+
+            readProps.minDepth = minDepth;
+            readProps.OKDepth = OKDepth;
+            if (readProps.initialOKDepth < 0)
+                readProps.initialOKDepth = OKDepth;
+
+            readProps.unbalancedRead = readUnbalanced;
+        }
+
+        private static void SetPairDepthThreshholds(ReadProperties readProps, int lengthToScan)
+        {
+            int OKPairMean = 0;                     // and the same for the pairs
+            int noOKPairs = 0;                      // no. of pairs that are better than OK depth
+            int minPairDepth = 0;                   // minimum depth allowed for a pair
+            int OKPairDepth = 0;                    // 'good' pair depth
+
+            int pairsInRead = readProps.pairsCount;
+            int[] merDepths = readProps.depths;
+            int[] pairDepths = readProps.pairDepths;
+
             if (pairsInRead > 0)
             {
-                // remove any erroneous pair depths now that OKDepth has been calculated
-                CullPairDepths(pairsInRead, pairDepths, merDepths, OKDepth);
+                int lowestWantedDepth = readProps.minDepth / 2;
+                int maxWantedDepth = readProps.OKDepth * 100;
+                //// remove any erroneous/dubious pair depths now that minDepth has been calculated
+                //CullPairDepths(pairsInRead, pairDepths, merDepths, lowestWantedDepth, maxWantedDepth);
 
                 // calculate the mean for the passable pairs
                 long sumPairDepths = 0;
@@ -3377,13 +3420,13 @@ namespace Blue
                 for (int m = 0; m < pairsInRead; m++)
                 {
                     int pairDepth = pairDepths[m];
-                    if (pairDepth >= lowestWantedDepth)
+                    if (pairDepth > 0)
                     {
                         sumPairDepths += pairDepth;
                         nonZeroPairCount++;
                     }
                 }
-                int averagePairDepth = averageLoadedPairDepth; // defaultOKPairDepth;
+                int averagePairDepth = averageLoadedPairDepth; 
                 if (nonZeroPairCount > 0)
                     averagePairDepth = (int)(sumPairDepths / nonZeroPairCount);
                 averagePairDepth = Math.Max(averagePairDepth, readProps.OKPairDepth * 2);
@@ -3411,36 +3454,26 @@ namespace Blue
                 if (noOKPairs > 0)
                     OKPairMean = (int)((double)noOKPairs / invSumPairs);            // harmonic mean of all 'non-zero' pairs
                 else
-                    OKPairMean = OKMerMean;                                         // no pairs deep enough so go with the kMer depths numbers
+                    OKPairMean = readProps.OKDepth;                                 // no pairs deep enough so go with the kMer depths numbers
             }
 
-            OKPairDepth = OKPairMean / 2;                               // and the equivalent for pair depths
-            OKPairDepth = Math.Max(OKPairDepth, readProps.OKPairDepth);
+            OKPairDepth = OKPairMean / 2;                                           
+            OKPairDepth = Math.Max(OKPairDepth, readProps.OKPairDepth);             // could be updating pairs after change
             minPairDepth = OKPairDepth / 2;
-            if (minPairDepth > minDepth)
-                minPairDepth = minDepth;                           
+            if (minPairDepth > readProps.minDepth)
+                minPairDepth = readProps.minDepth;
 
-            if (minDepth < 1)                                           // min depth always > 0
-                minDepth = minLoadDepth;
-            minDepth = Math.Max(minDepth, readProps.minDepth);
             if (pairsInRead > 0 && minPairDepth < 1)
                 minPairDepth = minLoadDepth;
             minPairDepth = Math.Max(minPairDepth, readProps.minPairDepth);
-            */
 
-            OKPairDepth = OKDepth * 2 / 3;
-            minPairDepth = OKPairDepth / 2;
-            if (minPairDepth == 0)
-                minPairDepth = 1;
+            //OKPairDepth = OKDepth * 2 / 3;
+            //minPairDepth = OKPairDepth / 2;
+            //if (minPairDepth == 0)
+            //    minPairDepth = 1;
 
-            readProps.minDepth = minDepth;
-            readProps.OKDepth = OKDepth;
             readProps.minPairDepth = minPairDepth;
             readProps.OKPairDepth = OKPairDepth;
-            if (readProps.initialOKDepth < 0)
-                readProps.initialOKDepth = OKDepth;
-
-            readProps.unbalancedRead = readUnbalanced;
         }
 
         private static ReadState CheckReadForProblems(Sequence read, ReadProperties readProps)
@@ -3496,6 +3529,8 @@ namespace Blue
             }
             if (zeroCount > 0 | (pairsInRead > 0 && zeroPairCount > 0))
                 readNeedsHealing = ReadState.readIsBroken;
+            if (zeroCount == 0 && (pairsInRead > 0 && zeroPairCount > 0))
+                readNeedsHealing = ReadState.readNeedsChecking;
 
             return readNeedsHealing;
         }
@@ -3550,7 +3585,7 @@ namespace Blue
             // a sudden drop is worth checking out as well (look for those places where we're coming out of a repeat and hit an error that takes us down the wrong path)
             bool checkDepthDrop = previousDepth >= OKDepth && depth < previousDepth * 2 / 3;
             // bad if both are below minimum depth for a read (with some caveats)
-            bool merDepthBad = MerIsBad(depth, minDepth, pairDepth, minPairDepth, merUnbalanced, previousDepth, previousPairDepth, m); 
+            bool merDepthBad = MerIsBad(depth, minDepth, OKDepth, pairDepth, minPairDepth, merUnbalanced, previousDepth, previousPairDepth, m); 
             // unsure if either are below the OK level for the read
             bool merDepthMiddling = depth < OKDepth || (pairDepth != -1 && pairDepth < OKPairDepth);    
 
@@ -3989,9 +4024,9 @@ namespace Blue
             return (low3Bases == a3) || (low3Bases == c3) || (low3Bases == g3) || (low3Bases == t3);
         }
 
-        private static bool MerIsBad(int depth, int minDepth, int pairDepth, int minPairDepth, bool merUnbalanced, int previousDepth, int previousPairDepth, int m)
+        private static bool MerIsBad(int depth, int minDepth, int OKDepth, int pairDepth, int minPairDepth, bool merUnbalanced, int previousDepth, int previousPairDepth, int m)
         {
-            bool merDepthBad = depth < minDepth || (pairDepth != -1 ? pairDepth < minPairDepth : false);  
+            bool merDepthBad = depth < minDepth || (depth < OKDepth && (pairDepth != -1 ? pairDepth < minPairDepth : false));  
 
             // but if this depth is much the same as the previous one (which we must have decided was OK), we'll let it be called 'poor' rather than 'bad'
             if (merDepthBad && (previousDepth > 0 && depth > previousDepth * 3 / 4) && (pairDepth == -1 || pairDepth > previousPairDepth * 3 / 4))
@@ -5402,7 +5437,7 @@ namespace Blue
                     lowRepVariant = ((depth * 1000) / deepestVariantDepth) <= 100; // --> 10%
                 if (lowRepVariant && depth >= readProps.OKDepth && !variantDepth.unbalanced)
                     lowRepVariant = false;
-                if (variantMer != startingMer && !MerIsBad(depth, readProps.minDepth, -1, 0, variantDepth.unbalanced, previousMerDepth, previousPairDepth, m) && !lowRepVariant)
+                if (variantMer != startingMer && !MerIsBad(depth, readProps.minDepth, readProps.OKDepth, -1, 0, variantDepth.unbalanced, previousMerDepth, previousPairDepth, m) && !lowRepVariant)
                 {
                     merVariants[viableMerVariants] = merVariants[v];
                     merVariantDepths[viableMerVariants] = variantDepth;
@@ -5445,7 +5480,7 @@ namespace Blue
                 int pairDepth = GetPairDepth(variantRead, currentVariant, readProps.mers, readProps.depths, m, readProps.minDepth);
 
                 // deferred bad-pair check above (pair depth not known) so do it now - kMer is known not to be bad on just the merDepth
-                if (pairDepth != -1 && MerIsBad(variantDepth.depth, readProps.minDepth, pairDepth, readProps.minPairDepth, variantDepth.unbalanced, previousMerDepth, previousPairDepth, m))
+                if (pairDepth != -1 && MerIsBad(variantDepth.depth, readProps.minDepth, readProps.OKDepth, pairDepth, readProps.minPairDepth, variantDepth.unbalanced, previousMerDepth, previousPairDepth, m))
                 {
                     ReturnSequence(variantRead);
                     continue;
@@ -5731,9 +5766,11 @@ namespace Blue
             DateTime lastTimeAwake = DateTime.Now;
             long lastReadsCount = 0;
 
-            while (!stopMonitor)
+            while (true)
             {
-                Thread.Sleep(monitorInterval);
+                signalReporter.WaitOne(reportInterval);
+                if (stopReporter)
+                    break;
 
                 monitorCounter += monitorInterval;
                 if (monitorCounter >= reportInterval)

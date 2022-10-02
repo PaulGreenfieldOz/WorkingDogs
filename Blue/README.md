@@ -6,7 +6,9 @@ Blue v2 tries to ensure that all the reads it are completely corrected, and uses
 
 The overall result of this change, and numerous others, is much improved accuracy (in relative terms). On the E. coli DH10B dataset referred to in the paper, Blue now has 99.98% of the corrected (and possibly trimmed) reads aligning with zero changes against the reference sequence, up from 99.90% previously (with _–good 80_ used in both cases).
 
-The first step in using Blue is to generate a set of kMers (and pairs) using Tessel. Tessel will also generate a histogram of the kMer repetition frequency that you can use to set the _minReps_ parameter for your Blue run. Once you have a set of kMers (a .cbt file), and (preferably) a set of corresponding kMer pairs (a .prs file), you can go ahead and correct your reads. Blue is a command-line program with the following cryptic usage hint:
+Blue v2.2 is a port onto the .NET platform. This port changes the way Blue is comiled/built, and also allows the direct processing of gzipped sequence data files (no need to unzip first).
+
+The first step in using Blue is to generate a set of kMers (and kMer pairs) using Tessel. Tessel will also generate a histogram of the kMer repetition frequency that you can use to set the _minReps_ parameter for your Blue run. Once you have a set of kMers (a .cbt file), and (preferably) a set of corresponding kMer pairs (a .prs file), you can go ahead and correct your reads. Blue is a command-line program with the following cryptic usage hint:
 ```
 Blue [-help] [-r run] –m minReps [-hp] [-t threads] [-l length] [-fixed]
 [-variable] [-good nn%] [-problems] [-extend nn] [-output dir]
@@ -43,29 +45,27 @@ The full set of Blue parameters is:
 | reads patterns or FNs |   | These parameters specify the names of the sequence data files to be corrected. You can either supply a list of space separated files names or a filename pattern. On Windows you would normally use a pattern and let Blue turn it into a set of matching file names. On Linux, the same pattern will normally be turned into a list of file names by the shell, with equivalent results. |
 
 
-Blue is written in C# and is provided pre-compiled for Windows, OSX and common Linux variants. These pre-compiled code files 
-should be stand-alone and should not require the installation of any additional run-time libraries. 
+Blue is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
+are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
+files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
 
-You can compile Blue yourself using Mono (under OSX and Linux), or under Visual Studio on Windows. You’ll need the mono-devel 
-package installed on Linux or OSX. 
+You can compile Blue yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
+The Blue code itself is in Program.cs in this directory, and you'll also need to download the files
+in WorkingDocsCoreLibrary. Blue can be built as 'frame-work dependent' code or as 
+standalone code (AOT) with necessary run-time code linked into the Blue executable. The AOT code will run on systems that do not have the 
+.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
 
-The Blue code itself is in Program.cs in this directory, and you'll also need to download kMers.cs, kMerCollections.cs, kMerPairs.cs, kMerTables.cs, SeqFiles.cs, Sequence.cs and TrimExtendReads.cs
-from WorkingDocsCoreLibrary. One simple way of compiling Blue (if you need to) is to make a directory containing these 8 .cs files
-and then run `csc /out:Blue.exe /target:exe *.cs` from this directory. Earlier versions of mono use ‘msc’ rather than ‘csc’ but 
-the syntax of the compilation command is the same. The C# compiler will produce the executable Blue.exe. This code file can be run
-natively on Windows or via mono Blue on other platforms. 
+The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
+build Blue executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
+parts of the platform run-time are linked into the executables. Pre-built Blue code is provided for Windows and Linux, and 
+.NET SDKs are available that will allow Blue to be built for both x64 and ARM macOS systems. The Linux code has been built on 
+Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
 
-The native Linux and OSX executables provided with the package were produced by cross-compiling Blue.exe with mkbundle, 
-targeting various Linux and OSX releases. For example:  
-	`mkbundle -o ubuntu-18.04\Blue Blue.exe --simple --cross mono-5.12.0-ubuntu-18.04-x64`   
-You can also use mkbundle to generate a native executable for your current system. You’ll need to know where the mono-devel 
-installation put the machine.config and the mono libraries.  
-	`mkbundle -o Blue --simple Blue.exe --machine-config /etc/mono/4.5/machine.config -L /apps/mono/5.4.1.7/lib/mono/4.5`  
-The mkbundle command has been changing with recent mono releases, and you may need to try other variants, such as:
-	`mkbundle -o Blue --cross default Blue.exe`
-	
-It is expected that all use of mono will be replaced late in 2018 once .NET Core 3 arrives, with direct multi-platform code generation. 
-
+The command `dotnet publish ./Blue.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+framework-dependent x64 Linux Blue executable, and other versions can be built by changing the name of the profile file in the 
+publish command.
 
 
 

@@ -43,7 +43,7 @@ The full set of Tessel parameters is:
 | ------------- |-------------| 
 | -k *kMerSize* |Length of the kMers to be generated. 'k' should typically be >=20 and must be <=32. The default is k=25. | 
 | -h or -help | Writes out a more verbose help text.
-| -g or -genome *genomeSize* | A guess at the total size of the final (assembled) genome or genomes in the sample. This is used for the initial sizing of some arrays and any rough guess will probably be OK. Default is 10,000,000 which will handle bacterial genomes quite well. |  
+| -g or -genome *genomeSize* | A guess at the total size of the final (assembled) genome or genomes in the sample. This is used for the initial sizing of some arrays and any rough guess will probably be OK. Default is 10,000,000 (10M) which will handle bacterial genomes quite well. K,M&G suffixes can be used. |  
 | -t or -threads *number_of_threads* | Number of parallel tiling threads. Tessel scales well with the number of threads, up to the point where it is limited by reading and writing the files. Default is 1. |  
 | -tmp tmpDir | Temporary files are written to this directory. This can be used to improve performance by pushing these temporary files to the fastest available storage. This is especially helpful with remote HDD storage and less important with local SSDs. Default is to write these temp files to the current directory. |
 | -min *minCount* | kMers found fewer that minCount times will be dropped. Useful for reducing the size of the kMer tables, especially when Blue will probably discard low abundance kMers while loading the kMer tables. The default is to discard singletons (-min 2). | 

@@ -427,7 +427,8 @@ namespace MerCollections
         //public Entry[] entries;                             // hash table contents. An array of entries linked into lists
         public int[] entries;                               // hash table contents. An array of entries linked into lists
         public long[] keys;                                 // actual keys from entries - taken out of Entry to allow for easy in-place sorting (and reduced memory usage, and parallelism)
-        public bool sorted;                                 // is this collection active or closed?
+        public bool sorted;                                 // has this collection been sorted already?
+        public bool condensed;                              // has this collection been reduced already?
         public int length = 0;                              // current length of buckets and entries arrays
         private int count = 0;                              // count of allocated entries - and index to next unused entry slot
         //public IEqualityComparer<ulong> equalityComparer;   // mer comparer (equality and hash - masking off the status bits)
@@ -505,6 +506,7 @@ namespace MerCollections
             this.upperBitsLength = upperBitsLength;
             this.byteBuffer = new byte[byteBufferLen];
             HashHelpers.rightShiftBases = 64 - merSize * 2 + 1;
+            //Console.WriteLine("initialised singletons # " + this.collectionNo + " length= " + capacity);
         }
 
         public void Recycle(int partitionNo)
@@ -517,6 +519,7 @@ namespace MerCollections
                 Array.Clear(keys, 0, this.count);
                 this.count = 0;
                 this.sorted = false;
+                this.condensed = false;
                 this.flushed = false;
                 this.partitionNo = partitionNo;
                 this.upperBits = (ulong)partitionNo << (64 - this.upperBitsLength);
@@ -557,6 +560,24 @@ namespace MerCollections
             return true;                                          // return true if Insert succeeded
         }
 
+        // adds an entry to the table, regardless of whether or not it is already there
+        // used to copy entries form a sparse singleton table back to the curret one being filled
+        // duplicates will be taken care of during merge
+        public void ForceInsertKey(ulong key)
+        {
+            ulong maskedKey = key & statusBitsMask;
+            int hashCode = HashHelpers.HashMer(maskedKey);
+            int targetBucket = hashCode % this.buckets.Length;
+            // no need to search the free list as there isn't one (no deletions). Just get the next unused entry.
+            int index = Interlocked.Increment(ref this.count) - 1;
+
+            //this.entries[index].next = this.buckets[targetBucket];     // point this new entry's next to the last entry pointed by buckets[targetBucket]
+            //this.entries[index].key = (long)key;
+            this.entries[index] = this.buckets[targetBucket];     // point this new entry's next to the last entry pointed by buckets[targetBucket]     
+            this.keys[index] = (long)key;
+            this.buckets[targetBucket] = index;                   // if collision occurs, update value in buckets[index] to point to new slot in entries[]
+        }
+
         // close a collection and sort the keys (sorting the un-expanded kMers)
         public void Sort()
         {
@@ -570,6 +591,7 @@ namespace MerCollections
 
             SingletonArraySorter singletonSorter = new SingletonArraySorter(keys);
             singletonSorter.Sort(0, this.count - 1);
+            sorted = true;
 
             //for (int i = 0; i < this.count - 2; i++)
             //    if ((ulong)keys[i] > (ulong)keys[i + 1])
@@ -582,6 +604,9 @@ namespace MerCollections
         // compress the singletons array in-place by skipping over inactive entries (shift active entries towards the start of the array)
         public int Condense()
         {
+            if (condensed)
+                return count;
+
             int merIdx = 0;
             for (int s = 0; s < this.count; s++)
             {
@@ -597,6 +622,7 @@ namespace MerCollections
             }
 
             count = merIdx;
+            condensed = true;
 
             return count;
         }
@@ -650,7 +676,7 @@ namespace MerCollections
         {
             get
             {
-                return (this.entries.Length);
+                return (this.length);
             }
         }
 

@@ -39,8 +39,8 @@ namespace MerCollections
         {
             this.merSize = merSize;
 
-            // scale genome size to compensate for the number of repeated error k-mers
-            dictionarySize = dictionarySize * 2;
+            // scale genome size to compensate for the number of error-tainted high depth pairs
+            dictionarySize = dictionarySize * 4;
 
             // how many shared mer partitions are needed to safely hold this many distinct k-mers?
             this.noOfPartitions = (int)(dictionarySize / maxTableSize + 1);
@@ -166,7 +166,7 @@ namespace MerCollections
             }
 
             // perhaps in an overflow table
-            if (repeatedMersFull[partitionNo])
+            if (repeatedMersFull[partitionNo] && overflowMers[threadNo] != null)
             {
                 int overflowIdx = overflowMers[threadNo].FindEntry(mer);
                 if (overflowIdx >= 0)

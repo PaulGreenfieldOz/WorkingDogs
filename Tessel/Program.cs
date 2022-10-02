@@ -16,12 +16,12 @@ namespace Tessel
     {
         // Tiles a set of read files into canonical k-mers and writes out a file containing these k-mers and how many times each of them appears.
         //
-        // usage: Tessel -k k-merLength -g genomeLength [-t #threads] [-f fasta|fastq] [-tmp tempDir] [-min minCount] [-tq] [-s] [pirs] [-nopairs] [-canonical|asread] [-text textFN] [-textFormat pairs|sum|faPairs|faSum] cbtName readsFN... or readsPattern
+        // usage: Tessel -k k-merLength -g genomeLength [-t #threads] [-f fasta|fastq] [-tmp tempDir] [-min minCount] [-tq] [-s] [pairs] [-nopairs] [-canonical|asread] [-text textFN] [-textFormat pairs|sum|faPairs|faSum] cbtName readsFN... or readsPattern
         //
         // Tessel  -k 25 -g 6000000 -t 4 CsporParamTest s_1_sequence_merged.fastq
         // -k 25 -g 60000000 -t 16 -min 1  -tmp g:\temp\ TesselTest-16 s_1_?_sequence.fastq
 
-        const string version = "2.1.0";                         // version - update on every significant change
+        const string version = "2.1.2";                         // version - update on every significant change
 
         static Stopwatch timeSpentFilling = new Stopwatch();
         static TimeSpan timeSpentSorting = TimeSpan.Zero;
@@ -36,6 +36,7 @@ namespace Tessel
         {
             tilingMers,
             writingMers,
+            loadingMers,
             tilingPairs,
             writingPairs
         }
@@ -78,19 +79,19 @@ namespace Tessel
                 return;
             }
 
-            int readsFormat = SeqFiles.formatNone; // format e.g. fasta, fasta, sfa
+            int readsFormat = SeqFiles.formatNone; // format e.g. fasta, fastq
             string cbtName = null;               // output binary file
             bool textMers = false;               // write out k-mers to a text file
             string textFileName = null;          // and the name of the text file
             TextFormat wantedtextFormat = TextFormat.tabPairs;  // and the format wanted
 
-            int merSize = 0;                     // tiling length
-            long genomeSize = 0;                 // estimated genome size
+            int merSize = 25;                    // tiling length
+            long genomeSize = 10000000;          // estimated genome size
             int trimLength = 0;                  // how much to trim from end of reads before tiling
             int trimQual = 0;                    // min qual value for end of read qual trimming
             int qualOffset = 0;                  // convert from qual character to score by subtracting this value
             int noThreads = 1;                   // no. of parallel threads used in counting and writing
-            int minCount = 1;                    // only write k-mers with counts >= to .cbt file
+            int minCount = 2;                    // only write k-mers with counts >= to .cbt file. Default is to discard singletons.
             string tempDir = "";                 // temporary directory for saving flushed singletons
             bool flushSingletons = true;         // (normal) flush full singletons tables to files
             bool inexactCount = false;           // generate rough count for HiFreq kMers (ala Jellyfish) by discarding singleton tables
@@ -108,6 +109,12 @@ namespace Tessel
                 {
                     args[p] = args[p].ToLower();
 
+                    if (args[p] == "-h" || args[p] == "-help")
+                    {
+                        WriteUsageFull();
+                        return;
+                    }
+
                     if (args[p] == "-k")
                     {
                         if (!CheckForParamValue(p, args.Length, "k-mer length number expected after -k"))
@@ -123,7 +130,7 @@ namespace Tessel
                         }
                         if (merSize > 32)
                         {
-                            Console.WriteLine("k-mer length must be <= 32");
+                            Console.WriteLine("kMer length must be <= 32");
                             return;
                         }
                         p++;
@@ -152,7 +159,7 @@ namespace Tessel
                         continue;
                     }
 
-                    if (args[p] == "-trimqual" || args[p] == "-tq")
+                    if (args[p] == "-trimqual" || args[p] == "-tq" || args[p] == "-qualtrim" || args[p] == "-qt")
                     {
                         if (!CheckForParamValue(p, args.Length, "min qual expected after -trimqual"))
                             return;
@@ -180,7 +187,17 @@ namespace Tessel
                             return;
                         try
                         {
-                            genomeSize = Convert.ToInt64(args[p + 1]);
+                            string sizeWanted = args[p + 1].ToLower();
+                            long multiple = 1;
+                            if (sizeWanted.EndsWith("g"))
+                                multiple = 1000000000;
+                            if (sizeWanted.EndsWith("m"))
+                                multiple = 1000000;
+                            if (sizeWanted.EndsWith("k"))
+                                multiple = 1000;
+                            if (multiple != 1)
+                                sizeWanted = sizeWanted.Substring(0, sizeWanted.Length - 1);
+                            genomeSize = Convert.ToInt64(sizeWanted) * multiple;
                         }
                         catch
                         {
@@ -191,6 +208,7 @@ namespace Tessel
                         continue;
                     }
 
+                    // no longer used - just kept for compatibility
                     if (args[p] == "-f" || args[p] == "-format")
                     {
                         if (!CheckForParamValue(p, args.Length, "reads format expected after -f|-format"))
@@ -249,7 +267,7 @@ namespace Tessel
                         continue;
                     }
 
-                    if (args[p] == "-tmp")
+                    if (args[p] == "-tmp" || args[p] == "-temp")
                     {
                         if (!CheckForParamValue(p, args.Length, "temp directory name expected after -tmp"))
                             return;
@@ -395,9 +413,15 @@ namespace Tessel
                 cbtSuffix = ".abt";
             cbtName = FNParams[0];
             FNParams.RemoveAt(0);
-            // and remove the .cbt suffix if it was present
+            // remove the .cbt suffix if it was present
             if (cbtName.ToLower().EndsWith(cbtSuffix))
+            {
                 cbtName = cbtName.Substring(0, cbtName.Length - cbtSuffix.Length);
+                string merSizeBit = "_" + merSize.ToString();
+                // and remove the kMer length suffix if it was present
+                if (cbtName.ToLower().EndsWith(merSizeBit))
+                    cbtName = cbtName.Substring(0, cbtName.Length - merSizeBit.Length);
+            }
 
             // find out if we're to write the .cbt to a directory - and make sure the directory is present
             if (cbtName.Contains(fnSeparator))
@@ -442,17 +466,14 @@ namespace Tessel
                 return;
             }
 
-            // if we weren't told what format the reads are in, use the format from the first file 
-            if (readsFormat == SeqFiles.formatNone)
-            {
-                StreamReader formatTester = new StreamReader(readsFNs[0]);
-                string firstLine = formatTester.ReadLine();
-                if (firstLine[0] == '>')
-                    readsFormat = SeqFiles.formatFNA;
-                if (firstLine[0] == '@')
-                    readsFormat = SeqFiles.formatFASTQ;
-                formatTester.Close();
-            }
+            // always use the format from the first file (-f option is ignored, and only kept for compatibility)
+            StreamReader formatTester = new StreamReader(readsFNs[0]);
+            string firstLine = formatTester.ReadLine();
+            if (firstLine[0] == '>')
+                readsFormat = SeqFiles.formatFNA;
+            if (firstLine[0] == '@')
+                readsFormat = SeqFiles.formatFASTQ;
+            formatTester.Close();
 
             if (trimQual > 0 && readsFormat != SeqFiles.formatFASTQ)
             {
@@ -512,6 +533,9 @@ namespace Tessel
             //        Console.WriteLine(i + " " + lengths[j] + " " + counts[j]);
             //}
 
+            // tell the flushing threads to stop, and move any buffers waiting to be flushed to the deferred lists
+            merTables.CurtailFlushing();
+
             // sorting in-memory tables prior to merge (flushed tables already sorted)
             // =======================================================================
             sortingTimer.Start();
@@ -521,8 +545,8 @@ namespace Tessel
             sortingTimer.Stop();           
             //Console.WriteLine("memory at end of sorting: " + GC.GetTotalMemory(false));
 
-            // wait for any pending singleton writes to complete (overlapped with sorting to give the writes more time)
-            merTables.Stabilise();
+            // wait for any in-flight singleton writes to complete (overlapped with sorting to give the writes more time)
+            merTables.WaitForFlushers();
 
             // merging tables and writing distinct kMers and counts (in .cbt format)
             // =====================================================================
@@ -541,7 +565,7 @@ namespace Tessel
             //for (int p = 0; p < merTables.noOfPartitions; p++)
             //    histo.WriteLine("merTable[" + p + "].length = " + merTables.repeatedMers[p].length + "\t" + merTables.repeatedMers[p].Count);
 
-            MergeAndWrite(noThreads, cbtFN, TypeOfCount.ulongType, minCount, merSize, merTables.repeatedMers, merTables.overflowMers, merTables.singletonFilters, merTables.singletonsWaitingFlush,
+            MergeAndWrite(noThreads, cbtFN, TypeOfCount.ulongType, minCount, merSize, merTables.repeatedMers, merTables.overflowMers, merTables.singletonFilters, merTables.singletonsPendingFlush,
                             merTables.flushedSingletonFNs, merTables.firstFlushedSingletonMer, merTables.lastFlushedSingletonMer, merTables.flushedSingletonsCount,
                             merTables.flushedLowRepsFNs, merTables.firstFlushedLowRepsMer, merTables.lastFlushedLowRepsMer, merTables.flushedLowRepsCount, tesselStats, sumReps);
 
@@ -564,7 +588,7 @@ namespace Tessel
             // generate kMers pairs if this option is set
             if (generatePairs)
             {
-                programPhase = phases.tilingPairs;
+                programPhase = phases.loadingMers;
 
                 // clean up memory used by counting/merging/writing
                 merTables = null;
@@ -583,28 +607,16 @@ namespace Tessel
 
                 string pairsFN = cbtFN.Replace(".cbt", ".prs");
 
-                // look at the first file to determine a likely read length (for gap calculations)
-                StreamReader testReader = new StreamReader(readsFNs[0]);
-                int readLength = 0;
-                for (int i = 0; i < 20; i++)
-                {
-                    string nextRead = SeqFiles.ReadRead(testReader, readsFormat);
-                    if (nextRead == null)
-                        break;
-                    int nextLength = nextRead.Length;
-                    if (nextLength > readLength)
-                        readLength = nextLength;
-                }
-                testReader.Close();
+                int readLength = tesselStats.avgReadLength;
 
                 // load the .cbt file into a kMerTable
                 kMersTable = new kMerTable(cbtFN, minCount, 1000);
                 int averageDepth = kMersTable.averageDepthLoaded;
-                long loadedDistinctMers = kMersTable.distinctMersLoaded;
+                long presentDistinctMers = kMersTable.distinctMersPresent;
 
                 if (merSize < kMerPairs.pairFragmentSize)
                 {
-                    Console.WriteLine("mers in .cbt file are shorter than pair fragment size: " + merSize + " < " + kMerPairs.pairFragmentSize);
+                    Console.WriteLine("kMers in .cbt file are shorter than pair fragment size: " + merSize + " < " + kMerPairs.pairFragmentSize);
                     return;
                 }
 
@@ -616,7 +628,9 @@ namespace Tessel
                     return;
                 }
 
-                distinctPairs = new MerCollections.PairTable(loadedDistinctMers, noThreads, 2 * kMerPairs.pairFragmentSize);
+                if (minCount > 1)
+                    presentDistinctMers = presentDistinctMers * 4;
+                distinctPairs = new MerCollections.PairTable(presentDistinctMers, noThreads, 2 * kMerPairs.pairFragmentSize);
 
                 // calculate a gap size based on the first read
                 pairGap = (readLength - endGuard) / 2 - (kMerPairs.pairFragmentSize * 2);
@@ -625,8 +639,8 @@ namespace Tessel
                 if (pairGap > maxGap)
                     pairGap = maxGap;
 
-                // start read counter again
                 progressReadsRead = 0;
+                programPhase = phases.tilingPairs;
 
                 foreach (string readsFN in readsFNs)
                     CountPairsInReadsFile(readsFN, readsFormat, noThreads, merSize, minReadLength, pairGap, minCount, kMersTable, distinctPairs, tesselStats);
@@ -755,17 +769,16 @@ namespace Tessel
                 sortingTasks.Enqueue(ufs);
                 //Console.WriteLine("queued singletons[" + i + "] (" + merTables.singletonFilters[i].Count + ") for sorting");
             }
-            for (int i = 0; i < merTables.singletonsWaitingFlush.Length; i++)
+            for (int i = 0; i < merTables.singletonsPendingFlush.Length; i++)
             {
-                if (merTables.singletonsWaitingFlush[i] != null)
-                    foreach (SingletonCollection waitingSingletons in merTables.singletonsWaitingFlush[i])
-                    {
-                        SorterTask ufs = new SorterTask();
-                        ufs.merCollection = waitingSingletons;
-                        ufs.merDictionary = null;
-                        sortingTasks.Enqueue(ufs);
-                        //Console.WriteLine("queued unflushed waiting singletons[" + i + "] (" + waitingSingletons.Count + ") for sorting");
-                    }
+                foreach (SingletonCollection waitingSingletons in merTables.singletonsPendingFlush[i])
+                {
+                    SorterTask ufs = new SorterTask();
+                    ufs.merCollection = waitingSingletons;
+                    ufs.merDictionary = null;
+                    sortingTasks.Enqueue(ufs);
+                    //Console.WriteLine("queued unflushed waiting singletons[" + i + "] (" + waitingSingletons.Count + ") for sorting");
+                }
             }
             for (int i = 0; i < merTables.repeatedMers.Length; i++)
             {
@@ -867,18 +880,22 @@ namespace Tessel
                 countingThreads[t].Start(countingParams[t]);
             }
 
+            int sumAvgLengths = 0;
             for (int t = 0; t < noThreads; t++)
             {
                 countingThreads[t].Join();
 
                 tesselStats.noOfReadsRead += countingParams[t].threadStats.noOfReadsRead;
                 tesselStats.noOfTiledMers += countingParams[t].threadStats.noOfTiledMers;
+                tesselStats.noOfValidMers += countingParams[t].threadStats.noOfValidMers;
                 tesselStats.noOfNMers += countingParams[t].threadStats.noOfNMers;
                 tesselStats.noOfPoorQuals += countingParams[t].threadStats.noOfPoorQuals;
+                sumAvgLengths += countingParams[t].threadStats.avgReadLength;
 
                 countingThreads[t] = null;
                 //Console.WriteLine("finished counting thread " + (t + 1));
             }
+            tesselStats.avgReadLength = sumAvgLengths / noThreads;
 
             bufferedReads.Close();
 
@@ -953,12 +970,12 @@ namespace Tessel
 
             histo.WriteLine();
             histo.WriteLine(tesselStats.noOfReadsRead + "\treads");
-            histo.WriteLine(tesselStats.noOfTiledMers + "\tmers tiled from reads");
-            histo.WriteLine(tesselStats.noOfNMers + "\tN-mers");
-            histo.WriteLine(tesselStats.noOfValidMers + "\tvalid mers");
-            histo.WriteLine(tesselStats.noOfDistinctMers + "\tdistinct mers written to cbt file");
-            histo.WriteLine(tesselStats.noOfMersWritten + "\ttotal mers written to cbt file");
-            histo.WriteLine(tesselStats.noOfMersDropped+ "\tmers dropped (too few reps)");
+            histo.WriteLine(tesselStats.noOfTiledMers + "\tkMers tiled from reads");
+            histo.WriteLine(tesselStats.noOfNMers + "\tN-kMers");
+            histo.WriteLine(tesselStats.noOfValidMers + "\tvalid kMers");
+            histo.WriteLine(tesselStats.noOfDistinctMers + "\tdistinct kMers written to cbt file");
+            histo.WriteLine(tesselStats.noOfMersWritten + "\ttotal kMers written to cbt file");
+            histo.WriteLine(tesselStats.noOfMersDropped+ "\tkMers dropped (too few reps)");
             histo.WriteLine(tesselStats.noOfPoorQuals + "\tpoor quality bases trimmed from ends of reads");
             histo.WriteLine(tesselStats.noOfDistinctPairs + "\tdistinct pairs written to prs file");
             histo.WriteLine(tesselStats.noOfPairsWritten + "\ttotal pairs written to prs file");
@@ -1055,6 +1072,7 @@ namespace Tessel
 
             ulong[] merSet = new ulong[maxReadSize];
             bool[] merValid = new bool[maxReadSize];
+            long basesRead = 0;
 
             Sequence[] readHeaderBatch = new Sequence[batchSize];
             Sequence[] readBatch = new Sequence[batchSize];
@@ -1091,11 +1109,20 @@ namespace Tessel
                 {
                     threadStats.noOfReadsRead++;
 
+                    if (readHeaderBatch[r].Bases[0] != '@' && readHeaderBatch[r].Bases[0] != '>')
+                    {
+                        Console.WriteLine("header line did not start with @ or > around read# " + progressReadsRead);
+                        Console.WriteLine(readBatch[r].ToString());
+                        EOF = true;
+                        break;
+                    }
+
                     int readLength = readBatch[r].Length;
                     if (readLength < merSize)
                         continue;
                     if (trimLength != 0)
                         readBatch[r].Length = readLength - trimLength;
+                    basesRead += readLength;
 
                     if (trimQual > 0)
                         threadStats.noOfPoorQuals += SeqFiles.TrimTrailingPoorQuals(readBatch[r], qualBatch[r], trimQual, qualOffset);
@@ -1119,6 +1146,7 @@ namespace Tessel
 
             } // while there are still reads in the file
 
+            threadStats.avgReadLength = (int)(basesRead / threadStats.noOfReadsRead);
         }
 
         static void PairCountingThread(object param)
@@ -2426,7 +2454,28 @@ namespace Tessel
 
         private static void WriteUsage()
         {
-            Console.WriteLine("usage: Tessel -k k-merLength -g genomeLength [-t #threads] [-f fasta|fastq] [-tmp tempDir] [-min minCount] [-trim nn] [-trimQual nn] [-s] [-pairs] [-nopairs] [-canonical|asread] [-text textFN] [-textFormat pairs|sum|faPairs|faSum] cbtName readsFN... or readsPattern (" + version + ")");
+            Console.WriteLine("usage: Tessel [-h] -k kMerLength -g genomeLength [-t #threads] [-tmp tempDir] [-min minCount] [-trim nn] [-trimQual nn] [-s] [-pairs] [-nopairs] [-canonical|asread] [-text textFN] [-textFormat pairs|sum|faPairs|faSum] cbtName readsFN... or readsPattern (" + version + ")");
+        }
+
+        private static void WriteUsageFull()
+        {
+            Console.WriteLine("usage: Tessel <options> <cbt name> <list of file names or patterns for reads files to be tiled>\n" +
+                                "\t-h|help : display this usage help and exit\n" +
+                                "\t-k kMerLength : (>~18 and <= 32 bases). Default 25.\n" +
+                                "\t-g|genome genomeLength : an estimate of the size of the genome(s) in the reads. Default 10000000\n" +
+                                "\t-t|threads #threads : no. of threads to use for the correction. Default is 1 thread.\n" +
+                                "\t-tmp tmpDir : directory used for temporary files. Fast storage is good. Default is current directory.\n" +
+                                "\t-m|min minCount : min count for kMers that are written to the final tile (.cbt) files.\n" +
+                                "\t-trim nn : tail-trim reads to this length before tiling. Default is no trimming.\n" +
+                                "\t-tq|trimQual minQual : trim reads to this qual level before tiling. Default is no qual-based trimming.\n" +
+                                "\t-pairs : generate pairs (.prs) as well as kMers (.cbt). Default.\n" +
+                                "\t-nopairs : do not generate a pairs file.\n" +
+                                "\t-canonical : save kMers in canonical form. Default.\n" +
+                                "\t-asread : save kMers in 'as read' form. Do not fold together kMers and their reverse-complements.\n" +
+                                "\t-text textFN : write kMers+counts in text as well as binary form. Default is to only generate binary files.\n" +
+                                "\t-textformat: format for text files. Choose from pairs,sum,faPairs,faSum. Default is pairs.\n" +
+                                "\tcbtName : name of cbt file to hold binary kMers+counts. Can be a full file name or just a prefix. \n" +
+                                "\treadsFNs/patterns : names of the files to be tiled for kMers.\n");
         }
 
         private static bool CheckForParamValue(int p, int argsLength, string msg)
@@ -2474,7 +2523,10 @@ namespace Tessel
                 if (programPhase == phases.writingMers)
                 {
                     Console.WriteLine("wrote " + progressMersWritten + "/" + progressMersToWrite + " " + kLength + "-mers");
-                    lastReadsRead = 0;  // prep for pairs
+                }
+                if (programPhase == phases.loadingMers)
+                {
+                    Console.WriteLine("loading kMer table for pair generation");
                 }
                 if (programPhase == phases.tilingPairs)
                 {
@@ -2554,6 +2606,7 @@ namespace Tessel
     public class ThreadStats
     {
         public long noOfReadsRead = 0;              // no. of reads read from all files
+        public int avgReadLength = 0;               // how long were these reads
         public long noOfTiledMers = 0;              // no. of mers tiled from these reads
         public long noOfValidMers = 0;              // no. of mers that are valid (do not contain Ns)
         public long noOfNMers = 0;                  // no. of mers not written because they contained Ns

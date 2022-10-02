@@ -31,7 +31,7 @@ namespace MerCollections
         bool inexactCount;                                          // discard singleton tables rather than keeping them for later merging
         int maxTableSize = 40000000;                                // ensure table partitions are not too big (used in initial partition sizing)
         int minTableSize = 5000000;                                 // nor too small
-        int[] possibleSingletonSizes = new int[] { 10000000, 20000000, 30000000, 40000000, 50000000 }; // quantised singleton table sizes
+        int[] possibleSingletonSizes = new int[] { 10000000, 20000000 /*, 30000000, 40000000, 50000000*/ }; // quantised singleton table sizes
         const long minKeepDepth = 3;                                // only keep k-mers of at least this depth in the repeated kmers table at the end-of-file flush
         int merSize = 0;                                            // set during initialisation and passed to the MerCollection constructors
         bool canonical;                                             // save canonical or as-read form of kMer
@@ -49,7 +49,7 @@ namespace MerCollections
         public SingletonCollection[] singletonFilters = null;       // partitioned hash sets holding possible singleton mers
                                                                     // these tables contain partitioned mers with an RC status bit at the RHS of the ulong
                                                                     // [0] says whether the mer is the RC form (true) or the as-is (false) form (used to calculate initial counts)
-        public List<SingletonCollection>[] singletonsWaitingFlush = null; // (probably largely empty) list of singleton buffers waiting to be flushed. Used to consolidate flush files
+        public List<SingletonCollection>[] singletonsPendingFlush = null; // (probably largely empty) list of singleton buffers waiting to be flushed. Used to consolidate flush files
         public List<string>[] flushedSingletonFNs = null;           // per-partition list of file names of flushed singleton partitions
         public List<ulong>[] firstFlushedSingletonMer = null;       // lowest mer in each flushed singleton file
         public List<ulong>[] lastFlushedSingletonMer = null;        // highest mer in each flushed singleton file
@@ -67,7 +67,7 @@ namespace MerCollections
         // event for signalling singleton writer that a buffer is queued 
         EventWaitHandle singletonWriterEWH = new EventWaitHandle(false, EventResetMode.AutoReset);
         // and the queue of singleton buffers waiting to be written
-        Queue<SingletonCollection> singletonsAwaitingFlush = new Queue<SingletonCollection>();
+        List<SingletonCollection> singletonsFlushQueue = new List<SingletonCollection>();
         // and the flushing threads
         Thread[] singletonFlushingThreads;
 
@@ -126,7 +126,7 @@ namespace MerCollections
             repeatedMersFull = new bool[noOfPartitions];                    // create full flags array (default is false)
             overflowMers = new MerDictionary[noThreads];                    // create per-thread overflow tables
             singletonFilters = new SingletonCollection[noSingletonPartitions];    // create partitioned singleton filters
-            singletonsWaitingFlush = new List<SingletonCollection>[noSingletonPartitions];
+            singletonsPendingFlush = new List<SingletonCollection>[noSingletonPartitions];
             flushedSingletonFNs = new List<string>[noSingletonPartitions];
             firstFlushedSingletonMer = new List<ulong>[noSingletonPartitions];
             lastFlushedSingletonMer = new List<ulong>[noSingletonPartitions];
@@ -148,10 +148,13 @@ namespace MerCollections
             }
 
             // initialise per-singleton-partition structures
+            int largestSingletonsSize = 0;
             for (int i = 0; i < noSingletonPartitions; i++)
             {
-                int scaledSingletonSize = /*2 **/ partitionSize / noSingletonPartitions * (noSingletonPartitions - i);
+                int scaledSingletonSize = partitionSize / noSingletonPartitions * (noSingletonPartitions - i);
                 scaledSingletonSize = RoundUpSingletonSize(scaledSingletonSize, possibleSingletonSizes);
+                if (scaledSingletonSize > largestSingletonsSize)
+                    largestSingletonsSize = scaledSingletonSize;
                 singletonFilters[i] = new SingletonCollection(scaledSingletonSize, merSize, singletonMerMask, singletonActiveFlagMask, singletonRCFlagMask, i, singletonPrefixBits);
                 //long safeMaxSingletonCapacity = (long)scaledSingletonSize * 95 / 100;   // careful of int overflow
                 //maxSingletonCapacity[i] = (int)(safeMaxSingletonCapacity);
@@ -161,7 +164,10 @@ namespace MerCollections
                 firstFlushedSingletonMer[i] = new List<ulong>();
                 lastFlushedSingletonMer[i] = new List<ulong>();
                 flushedSingletonsCount[i] = new List<int>();
+                singletonsPendingFlush[i] = new List<SingletonCollection>();
             }
+            SingletonCollection spareSingletons = new SingletonCollection(largestSingletonsSize, merSize, singletonMerMask, singletonActiveFlagMask, singletonRCFlagMask, 0, singletonPrefixBits);
+            singletonPool.Add(spareSingletons);
 
             // initialise per-thread structures
             for (int i = 0; i < noThreads; i++)
@@ -172,7 +178,7 @@ namespace MerCollections
             // and start the flushing threads
             singletonFlushingThreads = new Thread[noSingletonFlushingThreads];
             FlushingSingletonsThreadParams flushingParams = new FlushingSingletonsThreadParams();
-            flushingParams.buffersToBeFlushed = singletonsAwaitingFlush;
+            flushingParams.buffersToBeFlushed = singletonsFlushQueue;
             flushingParams.flushingEWH = singletonWriterEWH;
             for (int t = 0; t < noSingletonFlushingThreads; t++)
             {
@@ -184,19 +190,26 @@ namespace MerCollections
         }
 
         // ensure MerTable is in a final, stable state (called at the end of the counting phase)
-        public void Stabilise()
+        public void CurtailFlushing()
         {
             //if (singletonsAwaitingFlush.Count > 0)
             //    Console.WriteLine("waiting for " + singletonsAwaitingFlush.Count + " singleton buffers to be flushed");
-            SingletonCollection lastBuffer = GetSingletonTable(singletonFilters[0]);
+            SingletonCollection lastBuffer = new SingletonCollection(100, merSize, singletonMerMask, singletonActiveFlagMask, singletonRCFlagMask, 0, singletonPrefixBits);
             lastBuffer.lastBuffer = true;
-            lock (singletonsAwaitingFlush)
+            lock (singletonsFlushQueue)
             {
+                foreach (SingletonCollection sc in singletonsFlushQueue)
+                    singletonsPendingFlush[sc.partitionNo].Add(sc);
+                singletonsFlushQueue.Clear();
                 for (int t = 0; t < noSingletonFlushingThreads; t++)
-                    singletonsAwaitingFlush.Enqueue(lastBuffer);
+                    singletonsFlushQueue.Add(lastBuffer);
             }
             singletonWriterEWH.Set();
+        }
 
+        // ensure MerTable is in a final, stable state (called at the end of the counting phase)
+        public void WaitForFlushers()
+        {
             // wait for the flushing threads to finish
             for (int t = 0; t < noSingletonFlushingThreads; t++)
             {
@@ -212,7 +225,7 @@ namespace MerCollections
             //if (singletonsAwaitingFlush.Count > 0)
             //    Console.WriteLine("waiting for " + singletonsAwaitingFlush.Count + " singleton buffers to be flushed");
 
-            while (singletonsAwaitingFlush.Count > 0)
+            while (singletonsFlushQueue.Count > 0)
                 Thread.Sleep(1000);
         }
 
@@ -294,12 +307,12 @@ namespace MerCollections
                         else
                         {
                             thisSingletonPartition.timeWhenQueued = DateTime.Now;
-                            lock (singletonsAwaitingFlush)
+                            lock (singletonsFlushQueue)
                             {
-                                singletonsAwaitingFlush.Enqueue(thisSingletonPartition);
+                                singletonsFlushQueue.Add(thisSingletonPartition);
                             }
                             singletonWriterEWH.Set();
-                            //Console.WriteLine("queued " + singletonPartitionNo + "/" + flushNumberToUse + " for flushing");
+                            //Console.WriteLine("queued " + singletonPartitionNo + "/" + flushNumberToUse + " #" + thisSingletonPartition.partitionNo + " for flushing");
                         }
                     }
                 }
@@ -499,7 +512,7 @@ namespace MerCollections
             // so create a new overflow table if we don't already have one
             if (repeatedMersFull[partitionNo] && overflowMers[threadNo] == null)
             {
-                overflowMers[threadNo] = new MerDictionary(repeatedMers[partitionNo].lengthEntries / 10, merSize, 1); 
+                overflowMers[threadNo] = new MerDictionary(repeatedMers[partitionNo].lengthEntries / 10, merSize, 1);
                 //Console.WriteLine("added overflow for thread " + threadNo);
             }
 
@@ -521,7 +534,7 @@ namespace MerCollections
         {
             FlushingSingletonsThreadParams theseParams = (FlushingSingletonsThreadParams)threadParams;
             EventWaitHandle flushingEWH = theseParams.flushingEWH;
-            Queue<SingletonCollection> buffersToBeFlushed = theseParams.buffersToBeFlushed;           
+            List<SingletonCollection> buffersToBeFlushed = theseParams.buffersToBeFlushed;           
             
             bool stopFlusher = false;
 
@@ -534,14 +547,18 @@ namespace MerCollections
                 lock (buffersToBeFlushed)
                 {
                     if (buffersToBeFlushed.Count > 0)
-                        singletons = buffersToBeFlushed.Dequeue();
+                    {
+                        singletons = buffersToBeFlushed[0];
+                        buffersToBeFlushed.RemoveAt(0);
+                    }
                 }
 
                 // wait for something to be enqueued on the flushing queue if it was empty
                 if (singletons == null)
                 {
                     //Console.WriteLine("flusher: sleeping");
-                    flushingEWH.WaitOne(30000);
+                    //flushingEWH.WaitOne(30000);
+                    flushingEWH.WaitOne();
                     //Console.WriteLine("flusher: woken");
                     continue;
                 }
@@ -550,7 +567,6 @@ namespace MerCollections
                 if (singletons.lastBuffer)
                 {
                     stopFlusher = true;
-                    singletons = null;
                     // propagate 'something waiting' so the next thread can pick up its terminating message as well
                     flushingEWH.Set();
                     break;
@@ -561,78 +577,41 @@ namespace MerCollections
                 int partitionNo = singletons.partitionNo;
                 int flushNo = singletons.flushNo;
 
-                // pause briefly here if necessary to allow any in-flight updates to this table to settle
-                if ((DateTime.Now - singletons.timeWhenQueued).TotalMilliseconds < 1000.0)
-                    Thread.Sleep(1000);
-
-                //Console.WriteLine("flushing singletons[" + partitionNo + ", " + flushNo + "]" + " " + buffersToBeFlushed.Count + " buffers still queued");
-
-                // condense and in-place sort the singleton mers (left as un-extended)
-                singletons.Condense();
-                singletons.Sort();
-
-                // if we're only writing out few active singletons, save these for the next flush by adding the singletons set to the waiting list 
-                // and we'll also take this path if we've been asked not to flush singletons at all
-
-                int pendingSingletonsCount = singletons.Count;
-                if (singletonsWaitingFlush[partitionNo] != null)
-                    foreach (SingletonCollection pending in singletonsWaitingFlush[partitionNo])
-                        pendingSingletonsCount += pending.Count;
-                if (!this.flushSingletons || pendingSingletonsCount < singletons.Capacity / 2)
+                // if we're not flushing singletons, just add this buffer to the list and exit
+                if (!this.flushSingletons)
                 {
-                    if (singletonsWaitingFlush[partitionNo] == null)
-                        singletonsWaitingFlush[partitionNo] = new List<SingletonCollection>();
-
-                    singletonsWaitingFlush[partitionNo].Add(singletons);
-
-                    //Console.WriteLine("deferring singleton write[" + partitionNo + "] " + merIdx + " mers");
+                    singletonsPendingFlush[partitionNo].Add(singletons);
                     continue;
                 }
 
-                // get a pointer to the singletons themselves (from Entries)
-                //MerCollection.Entry[] sortedSingletons = singletons.entries;;
-                long[] sortedSingletons = singletons.keys;
-                int merIdx = singletons.Count;
+                // pause briefly here if necessary to allow any in-flight updates to this table to settle
+                if ((DateTime.Now - singletons.timeWhenQueued).TotalMilliseconds < 100.0)
+                    Thread.Sleep(100);
 
-                // got a singleton set worth flushing so add any pending singleton sets to it 
-                if (singletonsWaitingFlush[partitionNo] != null && singletonsWaitingFlush[partitionNo].Count != 0)
+                //Console.WriteLine("flushing singletons[" + partitionNo + ", " + flushNo + "]" + " " + buffersToBeFlushed.Count + " buffers still queued");
+
+                // condense the singleton mers (left as un-extended)
+                singletons.Condense();
+
+                // if we're only writing out few active singletons, copy these over to the current partition buffer rather than flush a small file
+                // this will also help populate the repeated kMers table more quickly
+                if (singletons.Count < singletons.Capacity / 2)
                 {
-                    // find out how many singletons are waiting (across all waiting sets)
-                    int sumWaiting = 0;
-                    foreach (SingletonCollection s in singletonsWaitingFlush[partitionNo])
-                        sumWaiting += s.Count;
-
-                    // ensure the buffer is big enough
-                    if (merIdx + sumWaiting > singletons.Capacity)
-                        //Array.Resize<MerCollection.Entry>(ref sortedSingletons, merIdx + sumWaiting);
-                        Array.Resize<long>(ref sortedSingletons, merIdx + sumWaiting);
-
-                    // copy the waiting singletons into this buffer
-                    for (int i = 0; i < singletonsWaitingFlush[partitionNo].Count; i++)
+                    //Console.WriteLine("emptying sparse singleton buffer [" + singletons.partitionNo + "]. " + singletons.Count + "/" + singletons.Capacity + " kMers");
+                    for (int i = 0; i < singletons.Count; i++)
                     {
-                        int singlesInArray = singletonsWaitingFlush[partitionNo][i].Count;
-                        //Console.WriteLine("writing pending singletons[" + partitionNo + ", " + i + "] with " + singlesInArray + " kMers");
-                        //MerCollection.Entry[] pendingSingles = singletonsWaitingFlush[partitionNo][i].entries;
-                        long[] pendingSingles = singletonsWaitingFlush[partitionNo][i].keys;
-                        for (int s = 0; s < singlesInArray; s++)
-                        {
-                            sortedSingletons[merIdx] = pendingSingles[s];
-                            merIdx++;
-                        }
+                        singletonFilters[partitionNo].ForceInsertKey((ulong)singletons.keys[i]);
                     }
-
-                    singletonsWaitingFlush[partitionNo].Clear();
-
-                    // and re-sort the combined singleton entries
-                    singletons.Sort();
+                    ReturnSingletonTable(singletons);
+                    continue;
                 }
 
-                //ulong previousMer = 0;
-
                 // and write out the (possibly augmented) set of singletons     
-                if (merIdx > 0)
+                if (singletons.Count > 0)
                 {
-                    //Console.WriteLine("wrote  " + merIdx + " singletons for flush " + partitionNo + "-" + flushNo + " " + buffersToBeFlushed.Count + " still queued");
+                    // sort the singletons in-place now that we've got a set to write out
+                    singletons.Sort();
+                    //Console.WriteLine("wrote " + singletons.Count + "/" + singletons.Capacity + " singletons for flush " + partitionNo + "-" + flushNo + ". " + buffersToBeFlushed.Count + " still queued");
 
                     // Add process ID at the beginning of the file name
                     int processID = Process.GetCurrentProcess().Id;
@@ -648,11 +627,11 @@ namespace MerCollections
 
                     //Console.WriteLine("wrote " + binaryfileName);
                     flushedSingletonFNs[partitionNo].Add(binaryfileName);                                       // Add name of file to list of flush files for the partition
-                    //firstFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[0].key & singletonMerMask);           // remember lowest and highest mer in each flush file 
-                    //lastFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[merIdx - 1].key & singletonMerMask);   // (without the RC bit)
-                    firstFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[0] & singletonMerMask);           // remember lowest and highest mer in each flush file 
-                    lastFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[merIdx - 1] & singletonMerMask);   // (without the RC bit)   
-                    flushedSingletonsCount[partitionNo].Add(merIdx);                                            // and how many mers we just wrote
+                    //firstFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[0].key & singletonMerMask);             // remember lowest and highest mer in each flush file 
+                    //lastFlushedSingletonMer[partitionNo].Add((ulong)sortedSingletons[merIdx - 1].key & singletonMerMask);     // (without the RC bit)
+                    firstFlushedSingletonMer[partitionNo].Add((ulong)singletons.keys[0] & singletonMerMask);                    // remember lowest and highest mer in each flush file 
+                    lastFlushedSingletonMer[partitionNo].Add((ulong)singletons.keys[singletons.Count - 1] & singletonMerMask);  // (without the RC bit)   
+                    flushedSingletonsCount[partitionNo].Add(singletons.Count);                                                  // and how many mers we just wrote
                 }
 
                 ReturnSingletonTable(singletons);
@@ -894,28 +873,41 @@ namespace MerCollections
 
             lock (singletonPool)
             {
-                // is there a pooled buffer of this size waiting to be re-used?
+                //Console.WriteLine("getting singleton table for [" + singletonTable.partitionNo + "] " + singletonPool.Count + " buffers available");
+                // is there a pooled buffer of this exact size waiting to be re-used?
                 for (int i = 0; i < singletonPool.Count; i++)
                 {
                     if (singletonPool[i].Capacity == singletonTable.Capacity)
                     {
                         newSingletonTable = singletonPool[i];
                         singletonPool.RemoveAt(i);
-                        //Console.WriteLine("allocating used singleton table (" + singletonTable.collectionNo + "). " + singletonLength + " k-mers");
+                        //Console.WriteLine("allocating exact used singleton table #" + newSingletonTable.collectionNo + ". " + newSingletonTable.Capacity + " k-mers");
                         break;
                     }
                 }
+                // or even a bigger one?
+                if (newSingletonTable == null)
+                    for (int i = 0; i < singletonPool.Count; i++)
+                    {
+                        if (singletonPool[i].Capacity >= singletonTable.Capacity)
+                        {
+                            newSingletonTable = singletonPool[i];
+                            singletonPool.RemoveAt(i);
+                            //Console.WriteLine("allocating larger used singleton table #" + newSingletonTable.collectionNo + ". " + newSingletonTable.Capacity + " for " + singletonTable.Capacity + " k-mers");
+                            break;
+                        }
+                    }
             }
 
             if (newSingletonTable == null)
             {
                 newSingletonTable = new SingletonCollection(singletonTable);
-                //Console.WriteLine("allocating new singleton table (" + singletonTable.collectionNo + "). " + singletonLength + " k-mers");
+                //Console.WriteLine("allocating new singleton table [" + singletonTable.partitionNo + "] #" + newSingletonTable.collectionNo + ". " + newSingletonTable.Capacity + " k-mers");
             }
             else
             {
                 newSingletonTable.Recycle(singletonTable.partitionNo);
-                //Console.WriteLine("recycling singleton table (" + singletonTable.collectionNo + "). " + singletonLength + "/" + singletonTable.Capacity + " k-mers");
+                //Console.WriteLine("cleaning used singleton table [" + singletonTable.partitionNo + "] #" + newSingletonTable.collectionNo + ". " + newSingletonTable.Capacity + " k-mers");
             }
 
             return newSingletonTable;
@@ -927,7 +919,7 @@ namespace MerCollections
             {
                 singletonPool.Add(singletonTable);
             }
-            //Console.WriteLine("returned singleton table (" + singletonTable.collectionNo + "). " + singletonTable.Capacity + " k-mers");
+            //Console.WriteLine("returned singleton table #" + singletonTable.collectionNo + ". " + singletonTable.Capacity + " k-mers");
         }
 
         private int RoundUpSingletonSize(int requestedSize, int[] possibleSingletonSizes)
@@ -987,6 +979,6 @@ namespace MerCollections
     public class FlushingSingletonsThreadParams
     {
         public EventWaitHandle flushingEWH;
-        public Queue<SingletonCollection> buffersToBeFlushed;
+        public List<SingletonCollection> buffersToBeFlushed;
     }
 }

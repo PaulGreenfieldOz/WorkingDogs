@@ -10,9 +10,19 @@ namespace BuildFilter
 {
     // Builds a filter from a set of genes/contigs/... 
     // 
-    // usage: BuildFilter -k merSize [+/-lcf] [-s] genesFN 
+    // usage: BuildFilter [-v1|-v1c|-v2c|-v2a] -k merSize [+/-lcf] [-s] [-mindepth nn] [-minlength nn] genesFN 
     //
     // The set of genes/contigs etc are expected to be in FASTA format.
+    //
+    // Version 1. Always generate canonical kMers. Only one kMer set. Each entry is a ulong containing the packed canonical kMer.
+    //            Start of file is a single int that holds the kMer size. [000000KK]
+    //
+    // Version 2. Steals the upper byte of the previous kMer size int as a version number. 0 == original; 1 == version 2
+    //            The second byte is stolen as an as-read(0)/canonical(1) flag, and the low byte is the kMer size once again. [VVCCCxxKK]
+    //
+    // The rest of the file in both V1 and V2 are just the packed kMers - end of file. No length is kept because low-complexity kMers are dropped
+    // during writing so the final length is unknown. This could be remedied in V3 but is currently not an issue.
+    //
 
     class Program
     {
@@ -26,12 +36,15 @@ namespace BuildFilter
                 return;
             }
 
-            int merSize = 0;
+            int kMerSize = 0;
             bool filterLowComplexity = true;
-            int min = 1;
+            int minDepth = 1;
+            int minLength = 0;
             List<string> targetsList = new List<string>();
             string mersFN = null;
             bool recursiveFileSearch = false;
+            int version = 2;
+            bool canonical = true;
 
             for (int p = 0; p < args.Length; p++)
             {
@@ -43,6 +56,27 @@ namespace BuildFilter
                     {
                         WriteUsage();
                         return;
+                    }
+
+                    if (args[p] == "-v1" || args[p] == "-v1c")
+                    {
+                        version = 1;
+                        canonical = true;
+                        continue;
+                    }
+
+                    if (args[p] == "-v2a")
+                    {
+                        version = 2;
+                        canonical = false;
+                        continue;
+                    }
+
+                    if (args[p] == "-v2c")
+                    {
+                        version = 2;
+                        canonical = true;
+                        continue;
                     }
 
                     if (args[p] == "-lcf")
@@ -69,7 +103,7 @@ namespace BuildFilter
                             return;
                         try
                         {
-                            merSize = Convert.ToInt32(args[p + 1]);
+                            kMerSize = Convert.ToInt32(args[p + 1]);
                         }
                         catch
                         {
@@ -80,23 +114,42 @@ namespace BuildFilter
                         continue;
                     }
 
-                    if (args[p] == "-m" || args[p] == "-min")
+                    if (args[p] == "-md" || args[p] == "-mindepth")
                     {
-                        if (!CheckForParamValue(p, args.Length, "number expected after -min"))
+                        if (!CheckForParamValue(p, args.Length, "number expected after -mindepth"))
                             return;
                         try
                         {
-                            min = Convert.ToInt32(args[p + 1]);
+                            minDepth = Convert.ToInt32(args[p + 1]);
                         }
                         catch
                         {
-                            Console.WriteLine("expected a number for the -min parameter: " + args[p + 1]);
+                            Console.WriteLine("expected a number for the -mindepth parameter: " + args[p + 1]);
                             return;
                         }
                         p++;
                         continue;
                     }
 
+                    if (args[p] == "-ml" || args[p] == "-minlength")
+                    {
+                        if (!CheckForParamValue(p, args.Length, "number expected after -minlength"))
+                            return;
+                        try
+                        {
+                            minLength = Convert.ToInt32(args[p + 1]);
+                        }
+                        catch
+                        {
+                            Console.WriteLine("expected a number for the -minlength parameter: " + args[p + 1]);
+                            return;
+                        }
+                        p++;
+                        continue;
+                    }
+
+                    Console.WriteLine("unrecognised arg: " + args[p]);
+                    return;
 
                 } // arg starts with +/-
 
@@ -111,7 +164,7 @@ namespace BuildFilter
 
             // only one name specified - assume we'll just modify it to generate the mers file name
             if (targetsList.Count == 1)
-                mersFN = targetsList[0].Substring(0, targetsList[0].LastIndexOf('.')) + "_" + merSize + ".mer";
+                mersFN = targetsList[0].Substring(0, targetsList[0].LastIndexOf('.')) + "_" + kMerSize + ".mer";
             else
             {
                 mersFN = targetsList[0];
@@ -140,8 +193,8 @@ namespace BuildFilter
                 Console.WriteLine("discarding low-complexity k-mers");
             else
                 Console.WriteLine("retaining low-complexity k-mers");
-            if (min > 1)
-                Console.WriteLine("discarding kMers found less than " + min + " times");
+            if (minDepth > 1)
+                Console.WriteLine("discarding kMers found less than " + minDepth + " times");
 
             long cumulativeLength = 0;
             foreach (string FN in targetFNs)
@@ -151,13 +204,14 @@ namespace BuildFilter
                 cumulativeLength += fileLength;
             }
 
-            MerDictionary<int> allFilterMers = new MerDictionary<int>(cumulativeLength/8, merSize);
+            MerDictionary<int> distinctMers = new MerDictionary<int>(2*cumulativeLength, kMerSize);
 
             bool EOF = false;
             ulong[] merSet = new ulong[2000];
             bool[] merValid = new bool[2000];
             DateTime start = DateTime.Now;
             int countSequences = 0;
+            int tooShortCount = 0;
 
             foreach (string targetFN in targetFNs)
             {
@@ -166,34 +220,41 @@ namespace BuildFilter
 
                 while (!EOF)
                 {
-                    string nextGene = SeqFiles.ReadRead(targets, fileFormat);
-                    if (nextGene == null)
+                    string seq = SeqFiles.ReadRead(targets, fileFormat);
+                    if (seq == null)
                         break;
                     countSequences++;
+
+                    if (seq.Length < minLength)
+                    {
+                        tooShortCount++;
+                        continue;
+                    }
 
                     //if (nextGene == "TCTCAAAGATTAAGCCATGCATGTCTAAGTACATGCCGTATTAAGGTGAAACCGCGAATGGCTCATTAAATCAGTTACGGTTCATTAGAACTTGAGCTAACTTACATGGATAACTGTGGTAATTCTAGAGCTAATACATGCACAAAAGCTTTGACCAAGCCGTGCTCGTCGCGGTGAAGGAAAAAGCGCATTTATTAGACCAAGACCAATGGGAATCATTGGGCTTTGTCTCGGTTGCCGTCAAAACGTAACCGGGCAAAGATTCCAGTTCCCTCAAACATTATGGTGACTCTAGATAACTGTAGCTAATCGCATGGCCAATGAGCCGGCGATAGATCTTTCAAGCGTCTGCCTTATCAACTGTCGATGGTAGGTTATGCGCCTACCATGGTTTTAACGGGTGACGAGGAATCAGGGTTCGATTTCGGAGAGGGAGCCTGAGAAACGGCTACCACATCCAAGGAAGGCAGCAGGCACGCAAATTACCCAATGCCAGAACGGCGAGGTAGTGACGAAAAATAACAATACGGGACTCTAATGAGGCCCCGTAATTGGAATGAGAACAATCTAAATCCTTTAACGAGGATCTATTGGAGGGCAAGTCTGGTGCCAGCAGCCGCGGTAATTCCAGCTCCAATAGCGTATATTAAAGTTGTTGCGGTTAAAAAGCTCGTAGTTGGATCTCAGTTTTTAGTTGTTTGCGGTCCACTAACAAGTGGTTACTGCTCAACTGAACTCAACAATAATACCGATTTATTTTGGGTGGTTCTGTTGCCGGTTAGTTGACGGCGGTTTGGCCGCGATCAGTGGATTTCACCTCGTGTGGGCTGCTGGTCGTGTCCAACTGTCTCTCATGCTAGCCCAACGGCCATTCAAATGCTCATGGTGCTCTTAACCGGGTGTCATGCGGCGATCGGTACGTTTACTTTGAAAAAATTAGAGTGCTCAAAGCAGGCGTTGAAAACGGATTTAAAACGTCTAAATTGCCCAGAATAATGTTGCATGGAATAATAAAATATGACCTCGGTTCTATTTTGTTGGTCTTTAGAACTTATTACCAATTAAGAGGTAATGATTAAGAGGGACAGACGGGGGCATTCGTATTGCGGCGCTAGAGGTGAAATTCTTGGACCGTCGCAAGACGAACTAAAGCGAAAGCATTTGCCAAGAATGTTTTCATTAATCAAGAACGAAAGTTAGAGGTTCGAAGGCGATCAGATACCGCCCTAGTTCTAACCATAAACGATGCCAACCAGCAATCCGTCTGAGTTCCTTAAATGACTCGACGGGCGGCTTCCGGGAAACCAAAGTTTTTCGGTTCCGGGGGAAGTATGGTTGCAAAGCTGAAACTTAAAGGAATTGACGGAAGGGCACCACCAGGAGTGGGGCCTGCGGCTTAATTTGACTCAACACGGGAAAACTTACCTGGCCCGGACACTAAAAGGATTGACAGATTGAGAGCTCTTTCTTGATTTAGTGGGTGGTGGTGCATGGCCGTTCTTAGTTGGTGGAGCGATTTGTCTGGTTAATTCCGATAACGAACGAGACTCTAGCCTACTAAATAGACTATGTTGGCTTGTGTAGAAATTTAACCACTAGCCATTTCATGTCGTTCGGRGCTCGTTTCGGCCTGTGTCGTTYKGGGCATCGGSARGTCGGTTCTGCCGGCTTGTCRRTGTTCTTGCGGCAYRGGTTTCGGAGCGGGTTTTCGGCGGCRTGATTTACTAGTGGCGTTTCAATAACGCCAACAGTGCTTCTTAGAGGGACAGGCGGCGATTCAGCCGCACGAAACAGAGCAATAACAGGTCTGTGATGCCCTTAGATGTCCAGGGCCGCACGCGCGCCACACTGAAGTGATCAGCGTGCTATTTTTGATGTCCTGCTCTGTTAAGAGTAGGTAACCCAATCAACCTTCTTCGTGATTGGGATAGGGGATTGTAATTATTCCCCTTGAACGAGGAATTCCCAGTAAGCGCGAGTCATAAGCTCGCGTTGATTACGTCCCTGCCCTTTGTACACACCGCCCGTCGCTACTACCGATTGAATGATTTAGTGAGGTCTTCAGACCAGCCGATGCAGTTGTTTACTTGTTGAACAACCGCGTCTGTTGTTGGAAAGATGCCCAAACTTGATTATTTAGAGGAAGTAAAAGTCGTAA")
                     //    Debugger.Break();
 
-                    if (kMers.GeneContainsAmbiguousBases(nextGene))
-                        nextGene = kMers.CollapseAmbiguousBases(nextGene);
+                    if (kMers.GeneContainsAmbiguousBases(seq))
+                        seq = kMers.CollapseAmbiguousBases(seq);
 
-                    int mersInRefGene = kMers.GenerateMersFromRead(nextGene, merSize, ref merSet, ref merValid);
+                    int mersInSeq = kMers.GenerateMersFromRead(seq, kMerSize, ref merSet, ref merValid);
 
-                    for (int m = 0; m < mersInRefGene; m++)
+                    for (int m = 0; m < mersInSeq; m++)
                     {
                         if (merValid[m])
                         {
                             ulong mer = merSet[m];
-                            // use canonical form to reduce hashSet size (may only have small effect due to use of strand-specific primers)
-                            ulong rcMer = kMers.ReverseComplement(mer, merSize);
-                            if (rcMer < mer)
-                                mer = rcMer;
+                            if (canonical)
+                            {
+                                ulong rcMer = kMers.ReverseComplement(mer, kMerSize);
+                                if (rcMer < mer)
+                                    mer = rcMer;
+                            }
 
-                            if (allFilterMers.ContainsKey(mer))
-                                allFilterMers[mer]++;
+                            if (distinctMers.ContainsKey(mer))
+                                distinctMers[mer]++;
                             else
-                                // add the canonical mer to the hashSet as we know it's not already there
-                                allFilterMers.Add(mer, 1);
+                                distinctMers.Add(mer, 1);
                         }
                     } // all mers in ref sequence
                 }
@@ -201,18 +262,24 @@ namespace BuildFilter
                 targets.Close();
             }
 
-            Console.WriteLine("Loaded " + allFilterMers.Count + " distinct " + merSize + "-mers from " + countSequences + " sequences in " +
-                    (DateTime.Now - start).TotalSeconds.ToString("#.0") + "s");
+            Console.WriteLine("Loaded " + distinctMers.Count + " distinct " + (canonical ? "canonical " : "as-read ") + kMerSize + "-mers from " + countSequences + " sequences in " +
+                    (DateTime.Now - start).TotalSeconds.ToString("#.0") + "s. " + (tooShortCount > 0 ? (tooShortCount + " too short.") : ""));
 
 
-            BinaryWriter tiledGenes = new BinaryWriter(File.Open(mersFN, FileMode.Create, FileAccess.Write));
+            BinaryWriter tiledSeqs = new BinaryWriter(File.Open(mersFN, FileMode.Create, FileAccess.Write));
             int mersWritten = 0;
             int skippedLC = 0;
             int skippedLowCount = 0;
 
-            tiledGenes.Write(merSize);                         // tag file with mer size for safety
+            if (version == 1)
+                tiledSeqs.Write(kMerSize);                         // first int is just kMer size with zero first byte
+            if (version == 2)
+            {
+                uint v2Header = 0x01000000 | (uint)(canonical ? 1 : 0) << 16 | (uint)kMerSize;
+                tiledSeqs.Write(v2Header);
+            }
 
-            foreach (KeyValuePair<ulong, int> kvp in allFilterMers)
+            foreach (KeyValuePair<ulong, int> kvp in distinctMers)
             {
                 ulong mer = kvp.Key;
                 int count = kvp.Value;
@@ -225,7 +292,7 @@ namespace BuildFilter
                 if (filterLowComplexity)
                 {
                     // just don't write out low complexity mers... 
-                    if (LowComplexityMer(merSize, mer) || LowComplexityMer(merSize, kMers.ReverseComplement(mer, merSize)))
+                    if (LowComplexityMer(kMerSize, mer) || LowComplexityMer(kMerSize, kMers.ReverseComplement(mer, kMerSize)))
                     {
                         skippedLC++;
                         //trace.WriteLine("- " + kMers.ExpandMer(mer, merSize));
@@ -233,21 +300,21 @@ namespace BuildFilter
                     }
                 }
 
-                if (count < min)
+                if (count < minDepth)
                 {
                     skippedLowCount++;
                     continue;
                 }
 
-                tiledGenes.Write(mer);                        // ulong - packed mer - max 32 bases
+                tiledSeqs.Write(mer);                        // ulong - packed mer - max 32 bases
                 mersWritten++;
                 //trace.WriteLine("+ " + kMers.ExpandMer(mer, merSize));
             }
 
-            tiledGenes.Close();
+            tiledSeqs.Close();
             //trace.Close();
 
-            Console.WriteLine("Wrote " + mersWritten + " " + merSize + "-mers (skipped " + skippedLC + " low complexity, skipped " + skippedLowCount + " low reps)  in " +
+            Console.WriteLine("Wrote " + mersWritten + " " + kMerSize + "-mers (skipped " + skippedLC + " low complexity, skipped " + skippedLowCount + " low reps) in " +
                     (DateTime.Now - start).TotalSeconds.ToString("#.0") + "s");
 
         }
@@ -264,7 +331,7 @@ namespace BuildFilter
 
         private static void WriteUsage()
         {
-            Console.WriteLine("usage: BuildFilter -k merSize [+/-lcf] [-min min] [-s] [filterFN] genesFN");
+            Console.WriteLine("usage: BuildFilter [-v1|-v2]  -k merSize [+/-lcf] [-mindepth nn] [-minlength nn] [-s] [filterFN] genesFN");
         }
 
         private static bool LowComplexityMer(int merSize, ulong mer)

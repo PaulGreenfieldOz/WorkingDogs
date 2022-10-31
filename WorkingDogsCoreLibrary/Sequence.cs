@@ -63,6 +63,12 @@ namespace WorkingDogsCore
             return new string(Bases, 0, Length);
         }
 
+        public void ToUpper()
+        {
+            for (int i = 0; i < Length; i++)
+                Bases[i] = Char.ToUpper(Bases[i]);
+        }
+
         public string ToString(int start, int length)
         {
             return new string(Bases, start, length);

@@ -24,7 +24,7 @@ namespace WorkingDogsCore
         bool partitioned = false;
         kMerDictionary<TV>[] dictionaryPartitions = null;
         kMerDictionary<TV> dictionary = null;
-        long capacity = 0;
+        long initialCapacity = 0;
 
         const int maxTable = 25000000;
 
@@ -53,7 +53,7 @@ namespace WorkingDogsCore
                 dictionary = new kMerDictionary<TV>((int)dictionarySize, merSize);
             }
 
-            capacity = dictionarySize;
+            initialCapacity = dictionarySize;
         }
 
         public void Add(ulong key, TV value)
@@ -117,7 +117,17 @@ namespace WorkingDogsCore
         {
             get
             {
-                return capacity;
+                if (partitioned)
+                {
+                    int totalCapacity = 0;
+                    for (int i = 0; i < noOfPartitions; i++)
+                        totalCapacity += dictionaryPartitions[i].Capacity;
+                    return totalCapacity;
+                }
+                else
+                {
+                    return dictionary.Capacity;
+                }
             }
         }
 
@@ -351,6 +361,24 @@ namespace WorkingDogsCore
                 else
                 {
                     return hashSet.Count;
+                }
+            }
+        }
+
+        public long Capacity
+        {
+            get
+            {
+                if (partitioned)
+                {
+                    long totalCapacity = 0;
+                    for (int i = 0; i < noOfPartitions; i++)
+                        totalCapacity += hashSetPartitions[i].Capacity;
+                    return totalCapacity;
+                }
+                else
+                {
+                    return hashSet.Capacity;
                 }
             }
         }
@@ -800,7 +828,7 @@ namespace WorkingDogsCore
    
             this.buckets[targetBucket] = index;     // if collision occurs, update value in buckets[index] to point to new slot in entries[]
 
-            if (count == resizeTriggerPoint)
+            if (count >= resizeTriggerPoint)
                 Resize();
         }
 
@@ -825,7 +853,7 @@ namespace WorkingDogsCore
 
             this.buckets[targetBucket] = index;     // if collision occurs, update value in buckets[index] to point to new slot in entries[]
 
-            if (count == resizeTriggerPoint)
+            if (count >= resizeTriggerPoint)
                 Resize();
         }
 
@@ -848,7 +876,7 @@ namespace WorkingDogsCore
 
             this.buckets[targetBucket] = index;     // if collision occurs, update value in buckets[index] to point to new slot in entries[]
 
-            if (count == resizeTriggerPoint)
+            if (count >= resizeTriggerPoint)
                 Resize();
         }
 
@@ -898,13 +926,13 @@ namespace WorkingDogsCore
 
         public void Resize()
         {
+            // prepare new (empty) buckets and entries
             int newBucketsLength = lengthBuckets * 5 / 4;
             int[] newBuckets = new int[newBucketsLength];
             for (int i = 0; i < newBuckets.Length; i++)
-            {
                 newBuckets[i] = -1;
-            }
             Entry[] newEntries = new Entry[this.lengthEntries * 5 / 4];
+
             Array.Copy(this.entries, 0, newEntries, 0, this.count);
             for (int j = 0; j < this.count; j++)
             {
@@ -1242,10 +1270,13 @@ namespace WorkingDogsCore
                 ulong mer = entries[i].key;
                 merVariants.Clear();
 
-                int vNo = kMers.GenerateMerLastSubVariants(mer, merVariants, merSize);
+                int vNo = kMers.GenerateMerSubVariants(mer, merVariants, 0, merSize);
                 for (int v = 0; v < vNo; v++)
                 {
                     ulong merVariant = merVariants[v];
+                    ulong merVariantRC = kMers.ReverseComplement(merVariant, merSize);
+                    if (merVariantRC < merVariant)
+                        merVariant = merVariantRC;
                     AddIfNotPresent(merVariant);
                 }
             }

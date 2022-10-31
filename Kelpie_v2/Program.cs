@@ -100,7 +100,7 @@ namespace Kelpie
 
     class Program
     {
-        const string version = "V2.1.0";
+        const string version = "V2.1.1";
 
         const bool cacheThings = true;
 
@@ -6065,7 +6065,7 @@ namespace Kelpie
 
             int partialForwardPrimerLength = (fwdPrimerHeadLength + primerCoreLength) - (fwdPrimerHeadLength + primerCoreLength) / 2;
             int maxExtendedLength = Int32.MaxValue;
-            if (maxLength != int.MaxValue)
+            if (maxLength != 0)
                 maxExtendedLength = maxLength + partialForwardPrimerLength + rvsPrimerHeadLength + primerCoreLength;
 
             // extending each of the 'starting' reads

@@ -1,7 +1,7 @@
 # Kelpie V2.1 
 
 Kelpie V2.1 is now available. Kelpie was ported to .NET6/7 and native code is now available for most platforms. Porting 
-to .NET has also enabled the direct processing of gzipped (.gz) sequence data files.  
+to .NET has also enabled the direct processing of gzipped (.gz) sequence data files. V2.2.1 fixed a typo that forced the use of 'length'. 
 
 # Kelpie usage
 
@@ -67,7 +67,7 @@ parts of the platform run-time are linked into the executables. Pre-built Kelpie
 Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
 
 The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
-framework-dependent x64 Linux Kelpie executable, and other versions can be built by changing the name of the profile file in the 
+framework-dependent x64 Linux Kelpie executable, and other versions can be build by changing the name of the profile file in the 
 publish command.
 
 ### Release notes

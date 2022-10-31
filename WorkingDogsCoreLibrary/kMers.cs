@@ -22,17 +22,20 @@ namespace WorkingDogsCore
         public static char[] baseToChar = new char[] { 'A', 'C', 'G', 'T' };
         //public static char[] baseToChar = new char[] { 'a', 'c', 'g', 't' };
 
-        // Mapping low 5 bits of ASCII chars to ACGT or not. Used to detect ambiguous bases. Summing over all translated bases will produce 0 if there are no ambiguous bases
+        // Mapping low 5 bits of ASCII chars to ACGT or not. Used to detect degenerate bases. Summing over all translated bases will produce 0 if there are no ambiguous bases
         private static int[] baseToNotACGT = new int[] { 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
         //                                               @, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, [,\\, ], ^, _
 
-        // Translate bases to ACGT - collapsing ambiguous bases. Indexed by low 5 bits of char. Always map to first base of set, default is A
+        // Translate bases to ACGT - collapsing degenerate bases. Indexed by low 5 bits of char. Always map to first base of set, default is A
         private static char[] baseToACGT = new char[] { '@', 'A', 'B', 'C', 'G', 'E', 'F', 'G', 'A', 'I', 'J', 'G', 'L', 'A', 'A', 'O', 'P', 'Q', 'G', 'G', 'T', 'U', 'G', 'A', 'X', 'T', 'Z', '[', '\\', ']', '^', '_' };
         //                                               @,   A,   B,   C,   D,   E,   F,   G,   H,   I,   J,   K,   L,   M,   N,   O,   P,   Q,   R,   S,   T,   U,   V,   W,   X,   Y,   Z,   [,  \\,   ],   ^,   _
 
-        // Complement bases - including ambiguous bases. Indexed by low 5 bits of char. Always map to first base in following table. Unknown are mapped to N
+        // Complement bases - including degenerate bases. Indexed by low 5 bits of char. Always map to first base in following table. Unknown are mapped to N
         public static char[] baseToComplement = new char[] { '@', 'T', 'V', 'G', 'H', 'N', 'N', 'C', 'D', 'N', 'N', 'M', 'N', 'K', 'N', 'N', 'N', 'N', 'Y', 'S', 'A', 'N', 'B', 'W', 'N', 'R', 'N', '[', '\\', ']', '^', '_' };
         //                                                    @,   A,   B,   C,   D,   E,   F,   G,   H,   I,   J,   K,   L,   M,   N,   O,   P,   Q,   R,   S,   T,   U,   V,   W,   X,   Y,   Z,   [,  \\,   ],   ^,   _
+
+        // valid base codes (including degenerate bases)
+        public static HashSet<char> validBaseCodes = new HashSet<char> { 'A', 'C', 'G', 'T', 'R', 'Y', 'M', 'K', 'S', 'W', 'H', 'B', 'V', 'D', 'N', 'I' };
 
         //  b   meaning         reason                                  rcm     rcb
         //
@@ -345,12 +348,12 @@ namespace WorkingDogsCore
             expansions['I'].Add('T');
         }
 
-        // takes a list of seqs and returns the same list with one single degenerate base expanded (in any barcodes in which it occurs)
-        private static List<string> ExpandDegenerateBase(List<string> barcodes, char degenerateBase, List<char> baseExpansion)
+        // takes a list of seqs and returns the same list with one single degenerate base expanded (in any seqs in which it occurs)
+        private static List<string> ExpandDegenerateBase(List<string> seqs, char degenerateBase, List<char> baseExpansion)
         {
             List<string> expandedSeqs = new List<string>();
 
-            foreach (string seq in barcodes)
+            foreach (string seq in seqs)
             {
                 // does this barcode contain this degenerate base?
                 if (seq.IndexOf(degenerateBase) >= 0)
@@ -409,13 +412,35 @@ namespace WorkingDogsCore
 
         public static string ReverseComplement(string s)
         {
+            return ReverseComplement(s, new char[s.Length]);   
+        }
+
+        public static string ReverseComplement(string s, char[] rcs)
+        {
             int sl = s.Length;
-            char[] rcs = new char[sl];
+            if (rcs.Length < sl)
+                Array.Resize<char>(ref rcs, sl);
 
             for (int i = 0; i < sl; i++)
                 rcs[sl - i - 1] = baseToComplement[s[i] & 0x1f];
 
             return new string(rcs);
+        }
+
+        public static string ReverseComplement(string s, int startIdx, int length, char[] rcs)
+        {
+            if (rcs.Length < length)
+                Array.Resize<char>(ref rcs, length);
+
+            for (int i = startIdx; i < startIdx+length; i++)
+                rcs[length - i - 1] = baseToComplement[s[i] & 0x1f];
+
+            return new string(rcs);
+        }
+
+        public static string ReverseComplement(string s, int startIdx, int length)
+        {
+            return ReverseComplement(s, startIdx, length, new char[length]);
         }
 
         public static StringBuilder ReverseComplement(StringBuilder s)
@@ -481,7 +506,7 @@ namespace WorkingDogsCore
 
             ulong baseMask = 0xc000000000000000;
 
-            for (int m = startIdx; m < variedLength; m++)
+            for (int m = startIdx; m < startIdx+variedLength; m++)
             {
                 ulong merWithHole = mer & ~(baseMask >> (m * 2));
                 for (ulong b = 0; b <= 3; b++)
@@ -501,6 +526,7 @@ namespace WorkingDogsCore
         {
             int variantsAdded = 0;
 
+            //ulong baseMask = 0xffffffffffffffff << (32 - merSize + 1) * 2;
             ulong baseMask = 0xffffffffffffffff << (merSize + 1) * 2;
             ulong merWithHole = mer & baseMask;
             for (ulong b = 0; b <= 3; b++)
@@ -575,6 +601,56 @@ namespace WorkingDogsCore
             }
 
             return mersInRead;
+        }
+
+        public static int GenerateExpandedMersFromRead(string read, int kMerSize, List<ulong> kMerSet, char[] degenerateBases, Dictionary<char, List<char>> degenerateBaseExpansions)
+        {
+            int readLength = read.Length;
+            int kMersInRead = readLength - kMerSize + 1;
+            bool kMerWasNormal = false;
+            ulong previousMer = 0;
+            HashSet<String> expandedMers = new HashSet<string>();
+
+            if (kMersInRead < 1)
+                return 0;
+
+            for (int i = 0; i < kMersInRead; i++)
+            {
+                // normal, fast path
+                if (kMerWasNormal)
+                {
+                    kMerWasNormal = CondenseMerIncremental(kMerSize, previousMer, read, i, out ulong currentMer);
+
+                    if (kMerWasNormal)
+                    {
+                        kMerSet.Add(currentMer);
+                        previousMer = currentMer;
+                    }
+                }
+
+                // kmers with degenerate bases (and first kMer in seq as well)
+                if (!kMerWasNormal)
+                {
+                    string kMer = read.Substring(i, kMerSize);
+                    expandedMers.Clear();
+                    ulong currentMer = 0;
+                    // expand any degenerate bases in the kMer (may be none)
+                    GenerateSeqVariants(kMer, kMerSize, degenerateBases, degenerateBaseExpansions, expandedMers, 0);
+                    foreach (string kMerExpansion in expandedMers)
+                    {
+                        CondenseMer(kMerExpansion, kMerSize, out currentMer);
+                        kMerSet.Add(currentMer);
+                    }
+                    // no degenerate bases (just ACGT) so move to fast path 
+                    if (expandedMers.Count == 1)
+                    {
+                        previousMer = currentMer;
+                        kMerWasNormal = true;
+                    }
+                }
+            }
+
+            return kMerSet.Count;
         }
     }
 }

@@ -2,23 +2,27 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
+using System.IO.Compression;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Diagnostics;
 
 namespace WorkingDogsCore
 {
     public class SeqFiles
     {
-        public const int formatNone = 0;            // no format specified
+        public const int formatNone = 0;            // no format specified (ask Readers to determine it if possible)
         public const int formatFASTA = 1;			// fasta with multiple data lines (.fna, .fa, .fasta, .fas, ...)
-        public const int formatFNA = 1;             // synonym
-        public const int formatFASTQ = 2;           // fastq 
+        public const int formatFNA = 1;             // synonym (bacwards compatiblity with very old code)
+        public const int formatSFA = 2;             // fasta with single data lines (assumed to fit inside a single buffer)
+        public const int formatFASTQ = 3;           // fastq 
 
         enum Formats
         {
             None = 0,
             FASTA = 1,
-            FASTQ = 2
+            SFA = 2,
+            FASTQ = 3
         }
 
         static char[] spaceDelimiter = new char[] { ' ' };
@@ -85,7 +89,7 @@ namespace WorkingDogsCore
                 quals = reads.ReadLine();
             }
 
-            if (readFormat == formatFNA)
+            if (readFormat == formatFNA || readFormat == formatSFA)
             {
                 read = ReadFASTA(reads, false, out readHeader);
             }
@@ -110,7 +114,7 @@ namespace WorkingDogsCore
                 quals = readsFile.ReadLine();
             }
 
-            if (readFormat == formatFNA)
+            if (readFormat == formatFNA || readFormat == formatSFA)
             {
                 try
                 {
@@ -119,7 +123,7 @@ namespace WorkingDogsCore
                 catch (Exception e)
                 {
                     Console.WriteLine("exception from ReadFASTA: " + e.Message);
-                    throw e;
+                    return null;
                 }
                 if (qualsFile != null)
                 {
@@ -303,6 +307,11 @@ namespace WorkingDogsCore
 
         public static void WriteRead(StreamWriter readsFile, string readHeader, string read, int readFormat)
         {
+            WriteRead(readsFile, readHeader, read, readFormat, 60);
+        }
+
+        public static void WriteRead(StreamWriter readsFile, string readHeader, string read, int readFormat, int lineLength)
+        {
             // @1:1:0:686#0/1
             // NTGGAGAATTCTGGATCCTCGGACTAAAACAATAGCAGTTGATTCGCTCACAGTTCTGGAGGCTAGAGGTATGAAA
             // +1:1:0:686#0/1
@@ -338,9 +347,9 @@ namespace WorkingDogsCore
                 int hrLen = read.Length;
                 while (m < hrLen)
                 {
-                    int wLen = Math.Min(60, hrLen - m);
+                    int wLen = Math.Min(lineLength, hrLen - m);
                     readsFile.WriteLine(read.Substring(m, wLen));
-                    m += 60;
+                    m += lineLength;
                 }
             }
             else
@@ -392,13 +401,28 @@ namespace WorkingDogsCore
             }
         }
 
+        public static StreamReader OpenSeqStream(string seqFN)
+        {
+            FileStream FS = new FileStream(seqFN, FileMode.Open, FileAccess.Read, FileShare.Read, 262144);
+            StreamReader RS;
+            if (seqFN.EndsWith(".gz"))
+            {
+                GZipStream decompressor = new GZipStream(FS, CompressionMode.Decompress);
+                RS = new StreamReader(decompressor, Encoding.ASCII, false);
+            }
+            else
+                RS = new StreamReader(FS, Encoding.ASCII, false);
+
+            return RS;
+        }
+
         // The qual scores used with Fastq reads are ambiguous. Illumina data may use a base of 64 ('@') while Sanger formatted data
         // uses a base of 33 ('!'). This method reads quals from a reads file until it finds a value that can only be Sanger or until it's
         // looked at the first 100 reads, and then returns the appropriate qual offset.
         public static int ResolveFastqQualAmbiguity(string fastqReadsFN, out bool fullQualHeader)
         {
             fullQualHeader = true;
-            StreamReader fastqReads = new StreamReader(fastqReadsFN);
+            StreamReader fastqReads = OpenSeqStream(fastqReadsFN);
             int qualBase = 64;                          // assume Illumina format until we find a Sanger-only value - this forces Illumina to be the default
             const char minIlluminaQual = '@';           // lowest possible Illumina qual
             const int readsToExamine = 100;             // only look at the first 100 reads
@@ -438,13 +462,43 @@ namespace WorkingDogsCore
 
             return qualBase;
         }
-   
+
+        // find the best qual score in the first few reads
+        public static int GetBestQual(string fastqReadsFN, int qualOffset)
+        {
+            StreamReader fastqReads = OpenSeqStream(fastqReadsFN);
+            const int readsToExamine = 10;              // only look at the first 100 reads
+            int readsExamined = 0;
+            int bestQualScore = 0;
+
+            while (readsExamined < readsToExamine)
+            {
+                string readHeader = fastqReads.ReadLine();
+                if (readHeader == null)
+                    break;
+                
+                readsExamined++;
+                fastqReads.ReadLine();
+                fastqReads.ReadLine();
+                string quals = fastqReads.ReadLine();
+
+                for (int i = 0; i < quals.Length; i++)
+                {
+                    if ((int)quals[i] - qualOffset > bestQualScore)
+                        bestQualScore = (int)quals[i] - qualOffset;
+                }
+            }
+            fastqReads.Close();
+
+            return bestQualScore;
+        }
+
         // finds any trailing poor qual region in a Sequence read and trims the read back to good bases
         public static int TrimTrailingPoorQuals(Sequence read, Sequence quals, int trimQual, int qualOffset)
         {
             const int windowLength = 10;
             const int passesNeededInWindow = windowLength * 3 / 4;
-            int basesTrimmed = 0;
+            int basesTrimmed;
             char[] qualCharArray = quals.Bases;
             int goodBaseIdx = 0;
             int lastQualIdx = quals.Length - 1;
@@ -490,9 +544,9 @@ namespace WorkingDogsCore
             int basesToTrim = 0;
             int goodBaseIdx = 0;
 
-            int[] qualScores = new int[quals.Length];
-            for (int i = 0; i < quals.Length; i++)
-                qualScores[i] = (int)quals[i] - qualOffset;
+            //int[] qualScores = new int[quals.Length];
+            //for (int i = 0; i < quals.Length; i++)
+            //    qualScores[i] = (int)quals[i] - qualOffset;
 
             for (int i = quals.Length - 1; i >= 0; i--)
                 if (((int)quals[i] - qualOffset) > trimQual)
@@ -501,7 +555,7 @@ namespace WorkingDogsCore
                     break;
                 }
 
-            basesToTrim = quals.Length - goodBaseIdx;
+            basesToTrim = quals.Length - (goodBaseIdx + 1);
 
             for (int i = goodBaseIdx; i > windowLength; i--)
             {
@@ -523,9 +577,52 @@ namespace WorkingDogsCore
             return basesToTrim;
         }
 
+        // counts the total number of 'poor' qual scores in a read
+        public static int CountPoorQuals(string quals, int minQual, int qualOffset)
+        {
+            int poorQualCount = 0;
+
+            for (int i = 0; i < quals.Length; i++)
+                if ((int)quals[i] - qualOffset < minQual)
+                    poorQualCount++;
+
+            return poorQualCount;
+        }
+
+        // sums the total qual scores for a read - higher numbers --> better quality read
+        public static int SumQualScores(string quals, int qualOffset)
+        {
+            int summedQualCount = 0;
+
+            for (int i = 0; i < quals.Length; i++)
+                summedQualCount += (int)quals[i] - qualOffset;
+
+            return summedQualCount;
+        }
+
+        // calculates a weighted poor qual score for a read - lower numbers --> better quality read
+        // sum is weighted to reflect the cost of errors outside the overlap region in a read pair
+        public static int SumWeightedPoorQualScore(string quals, int qualOffset, int bestQualScore, int overlapLength, int weighting)
+        {
+            int poorQualSum= 0;
+
+            // part of read likely to be not covered by the paired read
+            // errors here cannot be corrected from the paired read
+            for (int i = 0; i < quals.Length - overlapLength; i++)
+                poorQualSum += bestQualScore - ((int)quals[i] - qualOffset);
+            poorQualSum = poorQualSum * weighting;
+
+            // part of read likely to be covered by the paired read
+            // errors here may be corrected from the paired read
+            for (int i = overlapLength; i < quals.Length; i++)
+                poorQualSum += bestQualScore - (int)quals[i] - qualOffset;
+
+            return poorQualSum;
+        }
+
         public static string LFConvention(string readsFN)
         {
-            StreamReader reads = new StreamReader(readsFN);
+            StreamReader reads = OpenSeqStream(readsFN);
             bool foundCR = false;
             bool foundLF = false;
 
@@ -545,15 +642,25 @@ namespace WorkingDogsCore
         public static int DetermineFileFormat(string fn)
         {
             int fileFormat = formatNone;
-            StreamReader file = new StreamReader(fn);
-            string firstLine = file.ReadLine();
-            if (firstLine != null)
+            StreamReader file = OpenSeqStream(fn);
+
+            string[] first4Lines = new string[4];
+            for (int i = 0; i < first4Lines.Length; i++)
             {
-                if (firstLine[0] == '@')
-                    fileFormat = formatFASTQ;
-                if (firstLine[0] == '>')
-                    fileFormat = formatFNA;
+                first4Lines[i] = file.ReadLine();
+                if (first4Lines[i] == null)
+                    break;
             }
+
+            if (first4Lines[0][0] == '@' && first4Lines[2][0] == '+')   // normal fastq
+                fileFormat = SeqFiles.formatFASTQ;
+            if (first4Lines[0][0] == '@' && first4Lines[2][0] == '@')   // old Kelpie temp files (header+seq from fastq)
+                fileFormat = SeqFiles.formatSFA;
+            if (first4Lines[0][0] == '>' && first4Lines[2][0] == '>')   // appears to be single-line fasta (can always force .FASTA in caller)
+                fileFormat = SeqFiles.formatSFA;
+            if (first4Lines[0][0] == '>' && first4Lines[2][0] != '>')   // looks like multi-line fasta
+                fileFormat = SeqFiles.formatFASTA;
+
             return fileFormat;
         }
 
@@ -597,26 +704,53 @@ namespace WorkingDogsCore
     // =======================================
     // ----------- BufferedReader ------------
     // =======================================
+    //
+    // BufferedReader is NOT thread-safe. Most uses will be calling BR under lock protection - usually to ensure read-pairing is maintained, making the locks etc 
+    // needed to make BR calls thread-safe somewhat redundant.
 
     public class BufferedReader
     {
-        public int fileFormat = SeqFiles.formatNone;        // fasta or fastq
+        const int bufferLength = 1000000;                   // length of each buffer
+
+        internal class ReadBuffer
+        {
+            internal char[] buffer;                         // the set of buffers. Each buffer will start at the start of a read.
+            internal int[] lineLengths;                     // lengths of the lines found in these buffers (including \n)
+            internal int endOfLastCompleteRead = -1;        // index of the end of the last complete read in each buffer
+            internal int startOfBuffer = 0;                 // where reads into this buffer should start (after left overs from previous read have been copied in)
+            internal int nextLineIdx = 0;                   // next lineLength index to be used 
+            internal int startOfNextRead = 0;               // index into buffer of start of next read
+
+            public ReadBuffer()
+            {
+                buffer = new char[bufferLength + 1];        // in case we need to insert a \n at the end of the final buffer
+                lineLengths = new int[bufferLength / 20];   // 5% (bytes --> lines)
+                endOfLastCompleteRead = -1;
+                startOfBuffer = 0;
+            }
+        }
+
+        int fileFormat = SeqFiles.formatNone;               // fasta or fastq
         StreamReader readsFile = null;                      // fastq: seqs+quals; fasta: seqs only
         StreamReader qualsFile = null;                      // fasta only: separate quals file (rare and not buffered)
 
-        FillBufferDelegate fbd = null;                      // async FillBuffer delegate
-        IAsyncResult iarFillBuffer;                         // and the result of calling FillBuffer
-        char[][] buffers = new char[2][];                   // a pair of buffers - one being filled/full and one being emptied
-        const int bufferLength = 1000000;                   // length of these buffers
-        int[][] lineLengths = new int[2][];                 // lengths of the lines found in the currently-being-emptied buffer (including \n)
-        int[] endOfLastCompleteRead = new int[2];           // index of the start of the last complete read in each buffer
-        int currentBufferIdx;                               // pointers to current and previous buffers (0 or 1)
-        int previousBufferIdx;                              // swapped when buffers swap roles
-        bool EOF;                                           // EOF reached on readsFile - stop calling FillBuffer
-        bool readsFromBuffer;                               // buffered reads (usual) or direct calls (fasta with separate quals)
-        bool bufferEmpty = true;                            // previous ReadRead call returned the last full read - time to swap buffers 
-        int nextLineIdx = 0;                                // next lineLength index to be used
-        int startOfNextRead = 0;                            // index into buffer of start of next line
+        bool readsFromBuffer;                               // buffered reads (usual) or direct calls (fasta with separate quals file)
+        Task<bool> bufferFilling;                           // last async buffer filling task
+        const int noOfBuffers = 2;                          // initial number of buffers - both in-use and available
+        List<ReadBuffer> buffers = new List<ReadBuffer>(noOfBuffers);   // the set of buffers. Each buffer will start at the start of a read.
+        List<int> freeBuffers = new List<int>(noOfBuffers);             // available buffers waiting to be filled - indexes into buffers
+        List<int> filledBuffers = new List<int>(noOfBuffers);           // filled buffers, waiting to be read - in file order
+
+        int currentBufferIdx;                               // index to current buffer
+        int nextBufferIdx;                                  // index to next buffer to use (holds unused end of current buffer)
+        bool EOF = false;                                   // EOF reached on readsFile - stop calling FillBuffer
+        bool bufferEmpty = true;                            // previous ReadRead call returned the last full read in the buffer - time to swap buffers 
+
+        bool eolKnown = false;                              // has EOL convention been set yet?
+        int eolLength;                                      // length of end-of-line (CR, LF or CR-LF). 
+        char eolChar;                                       // char at end of each line (LF & CR-LF --> LF, CR --> CR)
+        int linesPerRead;                                   // #lines/read for fastq (4) & single-line fasta (sfa)(2)
+        char headerChar;                                    // headers start with this char
 
         public BufferedReader(int fileFormat, StreamReader readsFile, StreamReader qualsFile)
         {
@@ -624,44 +758,52 @@ namespace WorkingDogsCore
             this.readsFile = readsFile;
             this.qualsFile = qualsFile;
 
-            readsFromBuffer = fileFormat == SeqFiles.formatFASTQ || (fileFormat == SeqFiles.formatFNA && qualsFile == null);
+            // only do buffering for FASTQ files and known single-line FASTA (such as Kelpie temp files)
+            // FASTA files tend to be small and reads could cross buffer boundaries if they are multi-line.
+            readsFromBuffer = fileFormat == SeqFiles.formatFASTQ || fileFormat == SeqFiles.formatSFA;
+            if (fileFormat == SeqFiles.formatFASTQ)
+                linesPerRead = 4;
+            if (fileFormat == SeqFiles.formatSFA)
+                linesPerRead = 2;
+            // multi-line fasta is not buffered, so linesPerRead is irrelevant
+
+            // unresolved file type - tell caller and set EOF
+            if (fileFormat == SeqFiles.formatNone)
+            {
+                Console.WriteLine("file type could not be determined - returning EOF");
+                EOF = true;
+            }
+
+            headerChar = (char)readsFile.Peek();
 
             if (readsFromBuffer)
             {
-                buffers[0] = new char[bufferLength+1];          // in case we need to insert a \n at the end of the final buffer
-                buffers[1] = new char[bufferLength+1];
-                lineLengths[0] = new int[bufferLength / 20];    // 5% 
-                lineLengths[1] = new int[bufferLength / 20];
+                for (int i = 0; i < noOfBuffers; i++)
+                {
+                    buffers.Add(new ReadBuffer());          // allocate an empty buffer           
+                    freeBuffers.Add(i);                     // all buffers are free initially
+                }
 
-                currentBufferIdx = 0;
-                previousBufferIdx = 1;
                 EOF = false;
-                // start filling the initial buffer
-                fbd = new FillBufferDelegate(FillBuffer);
-                iarFillBuffer = fbd.BeginInvoke(readsFile, previousBufferIdx, currentBufferIdx, out EOF, null, null);
+                currentBufferIdx = -1;
+                // initiate filling the initial buffer
+                bufferFilling = Task.Run(() => FillBuffer(readsFile, GetFreeBuffer(), GetFreeBuffer()));
             }
         }
 
         public void Close()
         {
-            if (iarFillBuffer != null && !EOF)
-            {
-                // wait for any in-process buffer fill to complete 
-                if (!iarFillBuffer.IsCompleted)
-                    iarFillBuffer.AsyncWaitHandle.WaitOne();
-                // get out parameters from the async call
-                fbd.EndInvoke(out EOF, iarFillBuffer);
-                // and reset the wait handle
-                //iarFillBuffer.AsyncWaitHandle.Close();
-            }
+            if (!EOF)
+                bufferFilling.Wait(); ;
             readsFile.Close();
             if (qualsFile != null)
                 qualsFile.Close();
         }
 
-        public int ReadReads(int readsWanted, Sequence[] readHeaders, Sequence[] readSeqs, Sequence[] qualHeaders, Sequence[] quals)
+        public int ReadReads(int readsWanted, Sequence[] readHeaders, Sequence[] readSeqs, Sequence[] qualHeaders, Sequence[] quals/*, int client*/)
         {
             int readsIdx = 0;
+            bool EOFReached = false;
 
             if (readsFromBuffer)
             {
@@ -672,29 +814,28 @@ namespace WorkingDogsCore
                         if (EOF)
                             break;
 
-                        // wait for previous buffer fill to complete
-                        if (!iarFillBuffer.IsCompleted)
-                            iarFillBuffer.AsyncWaitHandle.WaitOne();
+                        // return previous buffer (if one exists)
+                        if (currentBufferIdx >= 0)
+                            freeBuffers.Add(currentBufferIdx);
 
-                        // get out parameters from the async call
-                        fbd.EndInvoke(out EOF, iarFillBuffer);
-                        // and reset the wait handle
-                        //iarFillBuffer.AsyncWaitHandle.Close();
+                        // wait for in-process buffer fill to complete
+                        //Console.WriteLine(client + " waiting for FillBuffer");
+                        bufferFilling.Wait();
 
-                        // and start the next buffer read
-                        if (!EOF)
+                        EOF = bufferFilling.Result;
+                        currentBufferIdx = filledBuffers[0];
+                        //Console.WriteLine(client + " FillBuffer returned (" + EOF + "," + currentBufferIdx + ")");
+                        filledBuffers.RemoveAt(0);
+                        buffers[currentBufferIdx].nextLineIdx = 0;
+                        buffers[currentBufferIdx].startOfNextRead = 0;
+
+                        // and start the next buffer fill
+                        if (!EOFReached)
                         {
-                            iarFillBuffer = fbd.BeginInvoke(readsFile, currentBufferIdx, previousBufferIdx, out EOF, null, null);
+                            int nbi = nextBufferIdx;
+                            int fbi = GetFreeBuffer();
+                            bufferFilling = Task.Run(() => FillBuffer(readsFile, nbi, fbi));
                         }
-
-                        previousBufferIdx = currentBufferIdx;
-                        if (currentBufferIdx == 0)
-                            currentBufferIdx = 1;
-                        else
-                            currentBufferIdx = 0;
-
-                        nextLineIdx = 0;
-                        startOfNextRead = 0;
                     }
 
                     bufferEmpty = GetNextRead(currentBufferIdx, readHeaders[readsIdx], readSeqs[readsIdx], qualHeaders[readsIdx], quals[readsIdx]);
@@ -706,13 +847,17 @@ namespace WorkingDogsCore
             }
             else
             {
-                // if we're dealing with the rare file type of fasta with a separate quals, lock the pair of files before
-                // reading to ensure that we pick up pairs of reads/quals and just do unbuffered reads
-                lock (readsFile)
-                {
+                // muliti-line FASTA files - just do unbuffered reads - add lock in rare (obsolete) case of separate fasta & quals to make reading the pairs of files thread-safe
+                if (qualsFile != null)
+                    lock (readsFile)
+                    {
+                        readsIdx = SeqFiles.ReadReads(readsWanted, readsFile, qualsFile, fileFormat, readHeaders, readSeqs, qualHeaders, quals);
+                    }
+                else
                     readsIdx = SeqFiles.ReadReads(readsWanted, readsFile, qualsFile, fileFormat, readHeaders, readSeqs, qualHeaders, quals);
-                }
+                EOF = readsWanted != readsIdx;
             }
+
             return readsIdx;
         }
 
@@ -720,64 +865,80 @@ namespace WorkingDogsCore
         {
             if (readsFromBuffer)
             {
-                if (bufferEmpty)
+                if (bufferEmpty && !EOF)
                 {
-                    // wait for previous buffer fill to complete
-                    if (!iarFillBuffer.IsCompleted)
-                        iarFillBuffer.AsyncWaitHandle.WaitOne();
+                    if (currentBufferIdx >= 0)
+                        freeBuffers.Add(currentBufferIdx);
 
-                    // get out parameters from the async call
-                    fbd.EndInvoke(out EOF, iarFillBuffer);
-                    // and reset the wait handle
-                    //iarFillBuffer.AsyncWaitHandle.Close();
+                    // wait for previous buffer fill to complete
+                    bufferFilling.Wait();
+                    EOF = bufferFilling.Result;
+
+                    currentBufferIdx = filledBuffers[0];
+                    filledBuffers.RemoveAt(0);
+                    buffers[currentBufferIdx].nextLineIdx = 0;
+                    buffers[currentBufferIdx].startOfNextRead = 0;
 
                     // and start the next buffer read
                     if (!EOF)
                     {
-                        iarFillBuffer = fbd.BeginInvoke(readsFile, currentBufferIdx, previousBufferIdx, out EOF, null, null);
+                        int nbi = nextBufferIdx;
+                        int fbi = GetFreeBuffer();
+                        bufferFilling = Task.Run(() => FillBuffer(readsFile, nbi, fbi));
                     }
-
-                    previousBufferIdx = currentBufferIdx;
-                    if (currentBufferIdx == 0)
-                        currentBufferIdx = 1;
-                    else
-                        currentBufferIdx = 0;
-
-                    nextLineIdx = 0;
-                    startOfNextRead = 0;
                 }
 
                 bufferEmpty = GetNextRead(currentBufferIdx, readHeader, readSeq, qualHeader, quals);
             }
             else
             {
-                // if we're dealing with the rare file type of fasta with a separate quals, lock the pair of files before
-                // reading to ensure that we pick up pairs of reads/quals and just do unbuffered reads
-                lock (readsFile)
-                {
+                // general (possibly multi-line) FASTA - just use unbuffered reads - adding lock if we have two files to read (seq + quals)
+                if (qualsFile != null)
+                    lock (readsFile)
+                    {
+                        EOF = SeqFiles.ReadRead(readsFile, qualsFile, fileFormat, readHeader, readSeq, qualHeader, quals);
+                    }
+                else
                     EOF = SeqFiles.ReadRead(readsFile, qualsFile, fileFormat, readHeader, readSeq, qualHeader, quals);
-                }
             }
 
             return EOF;
         }
 
+        private int GetFreeBuffer()
+        {
+            int bufferToUse;
+
+            if (freeBuffers.Count == 0)
+            {
+                // always return a buffer
+                buffers.Add(new ReadBuffer());
+                freeBuffers.Add(buffers.Count - 1);
+                //Console.WriteLine("added buffer #" + buffers.Count);
+            }
+
+            bufferToUse = freeBuffers[0];
+            freeBuffers.RemoveAt(0);
+
+            return bufferToUse;
+        }
+
         private bool GetNextRead(int cbi, Sequence readHeader, Sequence readSeq, Sequence qualHeader, Sequence quals)
         {
-            char[] currentBuffer = buffers[cbi];
-            int[] currentLineLengths = lineLengths[cbi];
-            int snr = startOfNextRead;
-            int nli = nextLineIdx;
-            int currentEndOfLastCompleteRead = endOfLastCompleteRead[cbi];
+            char[] currentBuffer = buffers[cbi].buffer;
+            int[] currentLineLengths = buffers[cbi].lineLengths;
+            int snr = buffers[cbi].startOfNextRead;
+            int nli = buffers[cbi].nextLineIdx;
+            int currentEndOfLastCompleteRead = buffers[cbi].endOfLastCompleteRead;
 
+            CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readHeader, 0);
+            snr += currentLineLengths[nli];
+            nli++;
+            CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readSeq, 0);
+            snr += currentLineLengths[nli];
+            nli++;
             if (fileFormat == SeqFiles.formatFASTQ)
             {
-                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readHeader, 0);
-                snr += currentLineLengths[nli];
-                nli++;
-                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readSeq, 0);
-                snr += currentLineLengths[nli];
-                nli++;
                 CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], qualHeader, 0);
                 snr += currentLineLengths[nli];
                 nli++;
@@ -785,93 +946,58 @@ namespace WorkingDogsCore
                 snr += currentLineLengths[nli];
                 nli++;
             }
-
-            if (fileFormat == SeqFiles.formatFNA)
+            else
             {
-                bool continueCopying = true;
-
-                // copy the header
-                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readHeader, 0);
-                snr += currentLineLengths[nli];
-                nli++;
-
-                // find out out long the read is and resize the readseq appropriately
-                int readLength = 0;
-                int nliForLength = nli;
-                int snrForLength = snr; 
-                while (continueCopying)
-                {
-                    int lineLength = currentLineLengths[nliForLength];
-                    readLength += lineLength;
-                    snrForLength += lineLength;
-                    nliForLength++;
-
-                    if (snrForLength == currentEndOfLastCompleteRead || currentBuffer[snrForLength] == '>')
-                        break;
-                }
-
-                if (readSeq.Capacity < readLength)
-                    readSeq.Resize(readLength + 100);
-
-                //if (readHeader.ToString() == ">NODE_543_length_150414_cov_144.508102" || readHeader.Bases[0] !='>')
-                //    Debugger.Break();
-
-                int copyStartIdx = 0;
-                while (continueCopying)
-                {
-                    CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readSeq, copyStartIdx);
-                    copyStartIdx = readSeq.Length;
-                    snr += currentLineLengths[nli];
-                    nli++;
-
-                    if (snr == currentEndOfLastCompleteRead || currentBuffer[snr] == '>')
-                        continueCopying = false;
-                }
+                qualHeader.Length = 0;
+                quals.Length = 0;
             }
 
-            nextLineIdx = nli;
-            startOfNextRead = snr;
-            return startOfNextRead == currentEndOfLastCompleteRead || currentLineLengths[nli] == 0;
+            buffers[cbi].nextLineIdx = nli;
+            buffers[cbi].startOfNextRead = snr;
+            return snr == currentEndOfLastCompleteRead || currentLineLengths[nli] == 0;
         }
 
         private void CopySeqFromBuffer(char[] buffer, int startOfSeq, int length, Sequence destination, int startIdx)
         {
             // copy up to but not including the \n
-            int lengthAfterCopy = length + startIdx - 1;
+            int lengthAfterCopy = length + startIdx - eolLength;
             if (lengthAfterCopy > destination.Capacity)
-                destination.Resize(lengthAfterCopy + lengthAfterCopy/2);
-            Array.Copy(buffer, startOfSeq, destination.Bases, startIdx, length-1);      
-            if (length > 1 && destination.Bases[lengthAfterCopy - 1] == '\r')
-                lengthAfterCopy--;
+                destination.Resize(lengthAfterCopy + lengthAfterCopy / 2);
+            Array.Copy(buffer, startOfSeq, destination.Bases, startIdx, lengthAfterCopy);
             destination.Length = lengthAfterCopy;
         }
 
-        private delegate void FillBufferDelegate(StreamReader reads, int cbi, int pbi, out bool EOF);
-
-        private void FillBuffer(StreamReader reads, int cbi, int pbi, out bool EOF)
+        private bool FillBuffer(StreamReader reads, int cbi, int nbi)
         {
-            char[] currentBuffer = buffers[cbi];
-            char[] previousBuffer = buffers[pbi];
+            //Console.WriteLine("filling buffer #" + cbi);
 
-            int bi = 0;
+            char[] currentBuffer = buffers[cbi].buffer;
+            char[] nextBuffer = buffers[nbi].buffer;
 
-            // copy any remaining chars from the previous buffer
-            int startOfLeftover = endOfLastCompleteRead[pbi];
-            if (startOfLeftover > 1)
-            {
-                int leftOverLength = bufferLength - startOfLeftover;
-                Array.Copy(previousBuffer, startOfLeftover, currentBuffer, bi, leftOverLength);
-                bi = leftOverLength;
-            }
-
-            int charsToRead = bufferLength - bi;
-            int charsRead = reads.ReadBlock(currentBuffer, bi, charsToRead);
-            EOF = charsRead != charsToRead;
-            int charsInBuffer = bi + charsRead;
+            int startIdx = buffers[cbi].startOfBuffer;
+            int charsToRead = bufferLength - startIdx;
+            int charsRead = reads.ReadBlock(currentBuffer, startIdx, charsToRead);
+            bool EOFReached = charsRead != charsToRead;
+            int charsInBuffer = startIdx + charsRead;
 
             // find the line boundaries to save having to scan the buffer again when extracting actual reads
             // and also finds the end of the incomplete read at the end of the buffer
-            endOfLastCompleteRead[cbi] = FindLinesInBuffer(cbi, charsInBuffer, EOF);
+            buffers[cbi].endOfLastCompleteRead = FindLinesInBuffer(cbi, charsInBuffer, EOF);
+
+            filledBuffers.Add(cbi);
+            //Console.WriteLine(filledBuffers.Count + " filled buffers");
+
+            // copy any remaining chars into the next buffer
+            int startOfLeftover = buffers[cbi].endOfLastCompleteRead;
+            if (startOfLeftover > 1)
+            {
+                int leftOverLength = bufferLength - startOfLeftover;
+                Array.Copy(currentBuffer, startOfLeftover, nextBuffer, 0, leftOverLength);
+                buffers[nbi].startOfBuffer = leftOverLength;
+            }
+            nextBufferIdx = nbi;
+
+            return EOFReached;
         }
 
         private int FindLinesInBuffer(int cbi, int charsInBuffer, bool EOF)
@@ -881,27 +1007,52 @@ namespace WorkingDogsCore
             // It then goes through and finds the start/end of all the reads (format-dependent).
             // The start of the last incomplete read is passed back so this region can be copied into the next buffer when it's filled.
 
-            char[] buffer = buffers[cbi];
-            int[] lineLengthsInBuffer = lineLengths[cbi];
+            char[] buffer = buffers[cbi].buffer;
+            int[] lineLengthsInBuffer = buffers[cbi].lineLengths;
 
             int li = 0;                     // start from the first line in the buffer
             int startOfNextLine = 0;        // start of the next line (starting point of scan for next \n)
             int startOfFinalRead = 0;       // char index of start of last read
-            int endOfLastCompleteRead = 0;  // index of end of the last complete read in the buffer (return value)
-            int fastqLineCount = 0;         // count 4 line sets to work out when a fastq line is starting
-            bool lastLineComplete = true;  // \n at very end of buffer
+            int endOfLastCompleteRead;      // index of end of the last complete read in the buffer (return value)
+            int readLineCount = 0;          // count 2 0r 4 lines for each read
+            bool lastLineComplete = true;   // \n at very end of buffer
+
+            // find out what the EOL convention is in the file (if not already known)
+            if (!eolKnown)
+            {
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    if (buffer[i] == '\n' || buffer[i] == '\r')
+                    {
+                        eolKnown = true;
+
+                        // CR-LF
+                        if (buffer[i] == '\r' && buffer[i + 1] == '\n')
+                        {
+                            eolChar = '\n';
+                            eolLength = 2;
+                            break;
+                        }
+
+                        // CR or LF
+                        eolChar = buffer[i];
+                        eolLength = 1;
+                        break;
+                    }
+                }
+            }
 
             // force \n at end of buffer at EOF 
-            if (EOF && buffer[charsInBuffer-1] != '\n')
+            if (EOF && buffer[charsInBuffer - 1] != eolChar)
             {
-                buffer[charsInBuffer] = '\n';
+                buffer[charsInBuffer] = eolChar;
                 charsInBuffer++;
             }
 
             // find and remember all the \n locations (plus 1 to get to the start of the next line - may be incomplete)
             while (startOfNextLine < charsInBuffer)
             {
-                int bi = Array.IndexOf<char>(buffer, '\n', startOfNextLine);        // find the next \n
+                int bi = Array.IndexOf<char>(buffer, eolChar, startOfNextLine);     // find the next \n
                 if (bi == -1)                                                       // no EOL at end of buffer
                 {
                     lineLengthsInBuffer[li] = 0;                                    // incomplete line so don't record a length
@@ -910,22 +1061,14 @@ namespace WorkingDogsCore
                 }
 
                 // now have the next complete line - so track reads
-                if (fileFormat == SeqFiles.formatFASTQ)                             // tracking fastq reads
-                {
-                    fastqLineCount++;                                               // keep track of where we are in fastq quad
-                    if (fastqLineCount > 4)
-                        fastqLineCount = 1;
+                readLineCount++;                                                   // keep track of where we are in fastq quad
+                if (readLineCount > linesPerRead)
+                    readLineCount = 1;
 
-                    if (fastqLineCount == 1 && buffer[startOfNextLine] == '@')      // remember each header line as it goes past
-                        startOfFinalRead = startOfNextLine;
-                }
-                if (fileFormat == SeqFiles.formatFNA)                               // tracking fasta files
-                {
-                    if (buffer[startOfNextLine] == '>')
-                        startOfFinalRead = startOfNextLine;
-                }
+                if (readLineCount == 1 && buffer[startOfNextLine] == headerChar)    // remember each header line as it goes past
+                    startOfFinalRead = startOfNextLine;
 
-                int lengthOfCurrentLine = bi - startOfNextLine + 1;                 // line length (including the trailing /n)
+                int lengthOfCurrentLine = bi - startOfNextLine + 1;                 // line length (including the trailing \n)
                 lineLengthsInBuffer[li] = lengthOfCurrentLine;                      // remember the start of line index and move on
                 startOfNextLine = bi + 1;                                           // move to the start of the next line
                 li++;
@@ -933,31 +1076,558 @@ namespace WorkingDogsCore
                 // running out of line-start slots so resize this array
                 if (li == lineLengthsInBuffer.Length)
                 {
-                    Array.Resize<int>(ref lineLengths[cbi], lineLengthsInBuffer.Length + lineLengthsInBuffer.Length / 2);
-                    lineLengthsInBuffer = lineLengths[cbi];                         // resize is tricky so need to refresh the local copy of the descriptor
+                    Array.Resize<int>(ref lineLengthsInBuffer, lineLengthsInBuffer.Length + lineLengthsInBuffer.Length / 2);
+                    buffers[cbi].lineLengths = lineLengthsInBuffer;                 // resize is tricky so need to refresh the local copy of the descriptor first
+
                 }
             }
 
             // find the incomplete read at the end of the buffer and work out where it ends
-            if (fileFormat == SeqFiles.formatFASTQ)
-            {
-                if (fastqLineCount == 4 && lastLineComplete)                        // was last read complete? (4 lines)
-                    endOfLastCompleteRead = charsInBuffer;                          // yes - no incomplete read to copy to start of next buffer
-                else
-                    endOfLastCompleteRead = startOfFinalRead;                       // the end of the line before that start of this read
-            }
-
-            if (fileFormat == SeqFiles.formatFNA)
-            {
-                if (EOF)
-                    endOfLastCompleteRead = charsInBuffer;                          // EOF - last read is complete
-                else
-                    endOfLastCompleteRead = startOfFinalRead;                       // --> '>' of final read   
-            }
+            if (readLineCount == linesPerRead && lastLineComplete)                  // was last read complete? (4 lines)
+                endOfLastCompleteRead = charsInBuffer;                              // yes - no incomplete read to copy to start of next buffer
+            else
+                endOfLastCompleteRead = startOfFinalRead;                           // the end of the line before that start of this read
 
             return endOfLastCompleteRead;
         }
     }
+
+#if NET6_0_OR_GREATER
+    // ============================================
+    // ----------- BufferedBlockReader ------------
+    // ============================================
+
+    // Getting blocks from a BufferedBlockReader is thread-safe (but need to be lock-protected for paired reads). Calls to get reads from within a buffer block are thread-safe.
+    // Only fastq and single-line fatsa are supported.
+    // Client threads get a buffer block for their exclusive use by calling GetBufferBlock. They can then get reads from this buffer block via Read... calls
+
+    public class BufferedBlockReader
+    {
+        const int bufferLength = 1000000;                   // length of each buffer
+
+        internal class ReadBuffer
+        {
+            internal char[] buffer;                         // the set of buffers. Each buffer will start at the start of a read.
+            internal int[] lineLengths;                     // lengths of the lines found in these buffers (including \n)
+            internal int endOfLastCompleteRead = -1;        // index of the end of the last complete read in each buffer
+            internal int startOfBuffer = 0;                 // where reads into this buffer should start (after left overs from previous read have been copied in)
+            internal int nextLineIdx = 0;                   // next lineLength index to be used 
+            internal int startOfNextRead = 0;               // index into buffer of start of next read
+
+            public ReadBuffer()
+            {
+                buffer = new char[bufferLength + 2];        // in case we need to insert a \n at the end of the final buffer
+                lineLengths = new int[bufferLength / 20];   // 5% (bytes --> lines)
+                endOfLastCompleteRead = -1;
+                startOfBuffer = 0;
+            }
+        }
+
+        int fileFormat = SeqFiles.formatNone;               // fasta or fastq (no support for fasta with quals)
+        StreamReader readsFile = null;                      // fastq: seqs+quals; fasta: single-line seqs only
+
+        Task<bool> bufferFilling;                           // last async buffer filling task
+        int noOfBuffers;                                    // initial number of buffers - both in-use and available
+        List<ReadBuffer> buffers = new List<ReadBuffer>();  // the set of buffers. Each buffer will start at the start of a read.
+        List<int> freeBuffers = new List<int>();            // available buffers waiting to be filled - indexes into buffers
+        List<int> filledBuffers = new List<int>();          // filled buffers, waiting to be read - in file order
+        private AutoResetEvent buffersAvailable;            // event used to ensure single-threaded access to read-next-buffer code (file needs to be read sequentially)
+
+        bool EOF;                                           // EOF reached on readsFile - stop calling FillBuffer
+        int nextBufferIdx = -1;                             // partially filled buffer - left overs from previous fill
+        bool eolKnown = false;                              // has EOL convention been set yet?
+        int eolLength;                                      // length of end-of-line (CR, LF or CR-LF). 
+        char eolChar;                                       // char at end of each line (LF & CR-LF --> LF, CR --> CR)
+        int linesPerRead;                                   // #lines/read for fastq (4) & single-line fasta (sfa)(2)
+        char headerChar;                                    // headers start with this char
+
+        public BufferedBlockReader(int fileFormat, StreamReader readsFile, int noOfCallers)
+        {
+            this.fileFormat = fileFormat;
+            this.readsFile = readsFile;
+            noOfBuffers = noOfCallers + 2;
+            EOF = false;
+
+            headerChar = (char)readsFile.Peek();    
+            
+            if (fileFormat == SeqFiles.formatFASTQ)
+                linesPerRead = 4;
+            if (fileFormat == SeqFiles.formatSFA)
+                linesPerRead = 2;
+
+            // BufferedBlockReader does not support multi-line fasta - so write out a message and force EOF 
+            if (this.fileFormat == SeqFiles.formatFASTA)
+            {
+                Console.WriteLine("BufferedBlockReader does not support multi-line fasta files");
+                EOF = true;
+            }
+            // file format couldn't be determined
+            if (this.fileFormat == SeqFiles.formatFASTA)
+            {
+                Console.WriteLine("File format could not be determined");
+                EOF = true;
+            }
+
+            for (int i = 0; i < noOfBuffers; i++)
+            {
+                buffers.Add(new ReadBuffer());              // allocate an empty buffer           
+                freeBuffers.Add(i);                         // all buffers are free initially
+            }
+
+
+            buffersAvailable = new AutoResetEvent(true);    // allow the first caller to wait for FillBuffer to complete
+            // initiate filling the initial buffer
+            bufferFilling = Task.Run(() => FillBuffer(readsFile, GetFreeBuffer(), GetFreeBuffer()));
+        }
+
+        public void Close()
+        {
+            if (!EOF)
+                bufferFilling.Wait(); 
+            readsFile.Close();
+        }
+
+        public int GetBufferBlock(/*int client*/)
+        {
+            int bufferIdx = -1;
+
+            // gate access into the Wait code
+            //Console.WriteLine("client " + client + " waiting on GetBufferBlock");
+            buffersAvailable.WaitOne();
+
+            if (EOF)
+            {
+                //Console.WriteLine("GetBufferBlock found EOF after waiting for client " + client);
+                buffersAvailable.Set();         // propagate event to any other waiters
+                return -1;
+            }
+
+            // wait for any previous buffer fill to complete
+            //Console.WriteLine("client " + client + " waiting on FillBuffer");
+            bufferFilling.Wait();
+            EOF = bufferFilling.Result;
+
+            //if (EOF)
+            //    Console.WriteLine("FillBuffer returned EOF for client " + client);
+
+            if (filledBuffers.Count > 0)
+            {
+                bufferIdx = filledBuffers[0];
+                filledBuffers.RemoveAt(0);
+            }
+
+            buffers[bufferIdx].nextLineIdx = 0;
+            buffers[bufferIdx].startOfNextRead = 0;
+
+            // and start the next buffer read
+            if (!EOF)
+            {
+                int nbi = nextBufferIdx;
+                int fbi = GetFreeBuffer();
+                bufferFilling = Task.Run(() => FillBuffer(readsFile, nbi, fbi));
+            }
+
+            buffersAvailable.Set();
+
+            //Console.WriteLine("giving buffer #" + bufferIdx + " to client #" + client);
+            return bufferIdx;
+        }
+
+        public bool ReadReadFromBlock(int bufferIdx, out Span<char> readHeader, out Span<char> readSeq, out Span<char> qualHeader, out Span<char> quals)
+        {
+            if (buffers[bufferIdx].startOfNextRead == buffers[bufferIdx].endOfLastCompleteRead)
+            {
+                //Console.WriteLine("returned buffer #" + bufferIdx + " to free buffers");
+                ReturnBuffer(bufferIdx);
+                readHeader = Span<char>.Empty;
+                readSeq = Span<char>.Empty;
+                qualHeader = Span<char>.Empty;
+                quals = Span<char>.Empty;
+                return false;
+            }
+
+            char[] currentBuffer = buffers[bufferIdx].buffer;
+            int[] currentLineLengths = buffers[bufferIdx].lineLengths;
+            int snr = buffers[bufferIdx].startOfNextRead;
+            int nli = buffers[bufferIdx].nextLineIdx;
+
+            readHeader = new Span<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+            snr += currentLineLengths[nli];
+            nli++;
+            readSeq = new Span<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+            snr += currentLineLengths[nli];
+            nli++;
+            if (fileFormat == SeqFiles.formatFASTQ)
+            {
+                qualHeader = new Span<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+                quals = new Span<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+            }
+            else
+            {
+                qualHeader = Span<char>.Empty;
+                quals = Span<char>.Empty;
+            }
+
+            buffers[bufferIdx].nextLineIdx = nli;
+            buffers[bufferIdx].startOfNextRead = snr;
+
+            // return true when buffer is exhausted (client will need to call GetBufferBlock to get next buffer)
+            return true;
+        }
+
+        public bool ReadReadFromBlock(int bufferIdx, out Memory<char> readHeader, out Memory<char> readSeq, out Memory<char> qualHeader, out Memory<char> quals)
+        {
+            if (buffers[bufferIdx].startOfNextRead == buffers[bufferIdx].endOfLastCompleteRead)
+            {
+                //Console.WriteLine("returned buffer #" + bufferIdx + " to free buffers");
+                ReturnBuffer(bufferIdx);
+                readHeader = Memory<char>.Empty;
+                readSeq = Memory<char>.Empty;
+                qualHeader = Memory<char>.Empty;
+                quals = Memory<char>.Empty;
+                return false;
+            }
+
+            char[] currentBuffer = buffers[bufferIdx].buffer;
+            int[] currentLineLengths = buffers[bufferIdx].lineLengths;
+            int snr = buffers[bufferIdx].startOfNextRead;
+            int nli = buffers[bufferIdx].nextLineIdx;
+
+            readHeader = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+            snr += currentLineLengths[nli];
+            nli++;
+            readSeq = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+            snr += currentLineLengths[nli];
+            nli++;
+            if (fileFormat == SeqFiles.formatFASTQ)
+            {
+                qualHeader = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+                quals = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+            }
+            else
+            {
+                qualHeader = Memory<char>.Empty;
+                quals = Memory<char>.Empty;
+            }
+
+            buffers[bufferIdx].nextLineIdx = nli;
+            buffers[bufferIdx].startOfNextRead = snr;
+
+            // return true when buffer is exhausted (client will need to call GetBufferBlock to get next buffer)
+            return true;
+        }
+
+        public bool ReadReadFromBlock(int bufferIdx, Sequence readHeader, Sequence readSeq, Sequence qualHeader, Sequence quals)
+        {
+            if (buffers[bufferIdx].startOfNextRead == buffers[bufferIdx].endOfLastCompleteRead)
+            {
+                //Console.WriteLine("returned buffer #" + bufferIdx + " to free buffers");
+                ReturnBuffer(bufferIdx);
+                readHeader.Length = 0;
+                readSeq.Length = 0; 
+                qualHeader.Length = 0;
+                quals.Length = 0;
+                return false;
+            }
+
+            char[] currentBuffer = buffers[bufferIdx].buffer;
+            int[] currentLineLengths = buffers[bufferIdx].lineLengths;
+            int snr = buffers[bufferIdx].startOfNextRead;
+            int nli = buffers[bufferIdx].nextLineIdx;
+
+            CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readHeader, 0);
+            snr += currentLineLengths[nli];
+            nli++;
+            CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readSeq, 0);
+            snr += currentLineLengths[nli];
+            nli++;
+            if (fileFormat == SeqFiles.formatFASTQ)
+            {
+                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], qualHeader, 0);
+                snr += currentLineLengths[nli];
+                nli++;
+                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], quals, 0);
+                snr += currentLineLengths[nli];
+                nli++;
+            }
+            else
+            {
+                qualHeader.Length = 0;
+                quals.Length = 0;
+            }
+
+            buffers[bufferIdx].nextLineIdx = nli;
+            buffers[bufferIdx].startOfNextRead = snr;
+
+            // return true when buffer is exhausted (client will need to call GetBufferBlock to get next buffer)
+            return true;
+        }
+
+        public int ReadReadsFromBlock(int bufferIdx, int readsWanted, Memory<char>[] readHeaders, Memory<char>[] readSeqs, Memory<char>[] qualHeaders, Memory<char>[] quals)
+        {
+            int readsRead = 0;
+            char[] currentBuffer = buffers[bufferIdx].buffer;
+            int[] currentLineLengths = buffers[bufferIdx].lineLengths;
+            int snr = buffers[bufferIdx].startOfNextRead;
+            int nli = buffers[bufferIdx].nextLineIdx;
+
+            while (readsRead < readsWanted)
+            {
+                if (snr == buffers[bufferIdx].endOfLastCompleteRead)
+                    break;
+
+                readHeaders[readsRead] = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+                readSeqs[readsRead] = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                snr += currentLineLengths[nli];
+                nli++;
+                if (fileFormat == SeqFiles.formatFASTQ)
+                {
+                    qualHeaders[readsRead] = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                    snr += currentLineLengths[nli];
+                    nli++;
+                    quals[readsRead] = new Memory<char>(currentBuffer, snr, currentLineLengths[nli] - eolLength);
+                    snr += currentLineLengths[nli];
+                    nli++;
+                }
+                else
+                {
+                    qualHeaders[readsRead] = Memory<char>.Empty;
+                    quals[readsRead] = Memory<char>.Empty;
+                }
+
+                readsRead++;
+            }
+
+            buffers[bufferIdx].startOfNextRead = snr;
+            buffers[bufferIdx].nextLineIdx = nli;
+            return readsRead;
+        }
+
+        public int ReadReadsFromBlock(int bufferIdx, int readsWanted, Sequence[] readHeaders, Sequence[] readSeqs, Sequence[] qualHeaders, Sequence[] quals)
+        {
+            int readsRead = 0;
+            char[] currentBuffer = buffers[bufferIdx].buffer;
+            int[] currentLineLengths = buffers[bufferIdx].lineLengths;
+            int snr = buffers[bufferIdx].startOfNextRead;
+            int nli = buffers[bufferIdx].nextLineIdx;
+
+            while (readsRead < readsWanted)
+            {
+                if (snr == buffers[bufferIdx].endOfLastCompleteRead)
+                    break;
+
+                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readHeaders[readsRead], 0);
+                snr += currentLineLengths[nli];
+                nli++;
+                CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], readSeqs[readsRead], 0);
+                snr += currentLineLengths[nli];
+                nli++;
+                if (fileFormat == SeqFiles.formatFASTQ)
+                {
+                    CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], qualHeaders[readsRead], 0);
+                    snr += currentLineLengths[nli];
+                    nli++;
+                    CopySeqFromBuffer(currentBuffer, snr, currentLineLengths[nli], quals[readsRead], 0);
+                    snr += currentLineLengths[nli];
+                    nli++;
+                }
+                else
+                {
+                    qualHeaders[readsRead].Length = 0;
+                    quals[readsRead].Length = 0;
+                }
+
+                readsRead++;
+            }
+
+            buffers[bufferIdx].startOfNextRead = snr;
+            buffers[bufferIdx].nextLineIdx = nli;
+            return readsRead;
+        }
+
+        private void CopySeqFromBuffer(char[] buffer, int startOfSeq, int length, Sequence destination, int startIdx)
+        {
+            // copy up to but not including the \n
+            int lengthAfterCopy = length + startIdx - eolLength;
+            if (lengthAfterCopy > destination.Capacity)
+                destination.Resize(lengthAfterCopy + lengthAfterCopy / 2);
+            Array.Copy(buffer, startOfSeq, destination.Bases, startIdx, lengthAfterCopy);
+            destination.Length = lengthAfterCopy;
+        }
+
+        private int GetFreeBuffer()
+        {
+            int bufferToUse;
+
+            lock (buffers)
+            {
+                if (freeBuffers.Count == 0)
+                {
+                    // always return a buffer
+                    buffers.Add(new ReadBuffer());
+                    freeBuffers.Add(buffers.Count - 1);
+                    //Console.WriteLine("added new buffer #" + buffers.Count + " to free buffers");
+                }
+
+                bufferToUse = freeBuffers[0];
+                freeBuffers.RemoveAt(0);
+                //Console.WriteLine("assigned buffer #" + bufferToUse + " from free buffers");
+            }
+
+            return bufferToUse;
+        }
+
+        private void ReturnBuffer(int bufferIdx)
+        {
+            lock (buffers)
+            {
+                //Console.WriteLine("returning buffer #" + bufferIdx);
+                freeBuffers.Add(bufferIdx);
+            }
+        }
+
+        private bool FillBuffer(StreamReader reads, int cbi, int nbi)
+        {
+            //Console.WriteLine("filling buffer #" + cbi);
+
+            char[] currentBuffer = buffers[cbi].buffer;
+            char[] nextBuffer = buffers[nbi].buffer;
+
+            int startIdx = buffers[cbi].startOfBuffer;
+            int charsToRead = bufferLength - startIdx;
+            int charsRead = reads.ReadBlock(currentBuffer, startIdx, charsToRead);
+            bool EOFReached = charsRead != charsToRead;
+            int charsInBuffer = startIdx + charsRead;
+
+            // find the line boundaries to save having to scan the buffer again when extracting actual reads
+            // and also finds the end of the incomplete read at the end of the buffer
+            buffers[cbi].endOfLastCompleteRead = FindLinesInBuffer(cbi, charsInBuffer, EOF);
+
+            //Console.WriteLine("added buffer #" + cbi + " to filled");
+            lock (buffers)
+            {
+                filledBuffers.Add(cbi);
+            }
+
+            // copy any remaining chars into the next buffer
+            int startOfLeftover = buffers[cbi].endOfLastCompleteRead;
+            int leftOverLength = bufferLength - startOfLeftover;
+            if (startOfLeftover > 1 && !EOFReached)
+            {
+                Array.Copy(currentBuffer, startOfLeftover, nextBuffer, 0, leftOverLength);
+                buffers[nbi].startOfBuffer = leftOverLength;
+                //Console.WriteLine("copied " + leftOverLength + " leftovers to buffer #" + nbi + " chars read=" + charsRead);      
+            }
+            nextBufferIdx = nbi;
+
+
+            return EOFReached;
+        }
+
+        private int FindLinesInBuffer(int cbi, int charsInBuffer, bool EOF)
+        {
+            // finds all the start-of-lines (char after /n) in the buffer and remembers them in startsOfLines. These are the indices in the current
+            // buffer of the first char of every line. The last entry in startsOfLines will be -1.
+            // It then goes through and finds the start/end of all the reads (format-dependent).
+            // The start of the last incomplete read is passed back so this region can be copied into the next buffer when it's filled.
+
+            char[] buffer = buffers[cbi].buffer;
+            int[] lineLengthsInBuffer = buffers[cbi].lineLengths;
+
+            int li = 0;                     // start from the first line in the buffer
+            int startOfNextLine = 0;        // start of the next line (starting point of scan for next \n)
+            int startOfFinalRead = 0;       // char index of start of last read
+            int endOfLastCompleteRead;      // index of end of the last complete read in the buffer (return value)
+            int readLineCount = 0;          // count 2 0r 4 lines for each read
+            bool lastLineComplete = true;   // \n at very end of buffer
+
+            // find out what the EOL convention is in the file (if not already known)
+            if (!eolKnown)
+            {
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    if (buffer[i] == '\n' || buffer[i] == '\r')
+                    {
+                        eolKnown = true;
+
+                        // CR-LF
+                        if (buffer[i] == '\r' && buffer[i + 1] == '\n')
+                        {
+                            eolChar = '\n';
+                            eolLength = 2;
+                            break;
+                        }
+
+                        // CR or LF
+                        eolChar = buffer[i];
+                        eolLength = 1;
+                        break;
+                    }
+                }
+            }
+
+            // force \n at end of buffer at EOF 
+            if (EOF && buffer[charsInBuffer - 1] != eolChar)
+            {
+                buffer[charsInBuffer] = eolChar;
+                charsInBuffer++;
+            }
+
+            // find and remember all the \n locations (plus 1 to get to the start of the next line - may be incomplete)
+            while (startOfNextLine < charsInBuffer)
+            {
+                int bi = Array.IndexOf<char>(buffer, eolChar, startOfNextLine);     // find the next \n
+                if (bi == -1)                                                       // no EOL at end of buffer
+                {
+                    lineLengthsInBuffer[li] = 0;                                    // incomplete line so don't record a length
+                    lastLineComplete = false;
+                    break;
+                }
+
+                // now have the next complete line - so track reads
+                readLineCount++;                                                   // keep track of where we are in fastq quad
+                if (readLineCount > linesPerRead)
+                    readLineCount = 1;
+
+                if (readLineCount == 1 && buffer[startOfNextLine] == headerChar)    // remember each header line as it goes past
+                    startOfFinalRead = startOfNextLine;
+
+                int lengthOfCurrentLine = bi - startOfNextLine + 1;                 // line length (including the trailing \n)
+                lineLengthsInBuffer[li] = lengthOfCurrentLine;                      // remember the start of line index and move on
+                startOfNextLine = bi + 1;                                           // move to the start of the next line
+                li++;
+
+                // running out of line-start slots so resize this array
+                if (li == lineLengthsInBuffer.Length)
+                {
+                    Array.Resize<int>(ref lineLengthsInBuffer, lineLengthsInBuffer.Length + lineLengthsInBuffer.Length / 2);
+                    buffers[cbi].lineLengths = lineLengthsInBuffer;                 // resize is tricky so need to refresh the local copy of the descriptor first
+
+                }
+            }
+
+            // find the incomplete read at the end of the buffer and work out where it ends
+            if (readLineCount == linesPerRead && lastLineComplete)                  // was last read complete? (4 lines)
+                endOfLastCompleteRead = charsInBuffer;                              // yes - no incomplete read to copy to start of next buffer
+            else
+                endOfLastCompleteRead = startOfFinalRead;                           // the end of the line before that start of this read
+
+            return endOfLastCompleteRead;
+        }
+    }
+
+#endif
+
 
     // =========================================
     // ------------  BufferedWriter ------------
@@ -982,21 +1652,18 @@ namespace WorkingDogsCore
             internal AutoResetEvent buffersAvailable;
         }
 
-        StreamWriter seqFile;
-        char[] newline;
+        private List<WriteBuffer> bufferPool;
+        private List<WriteBuffer> availableBuffers;
+        private AutoResetEvent buffersAvailable;
 
-        List<WriteBuffer> bufferPool;
-        List<WriteBuffer> availableBuffers;
-        AutoResetEvent buffersAvailable;
-
-        static Queue<WriteBuffer> queuedBuffers;
-        static AutoResetEvent buffersQueued;
-        static List<WriteBuffer> buffersToWrite;
+        private static Queue<WriteBuffer> queuedBuffers;
+        private static AutoResetEvent buffersQueued;
+        private static List<WriteBuffer> buffersToWrite;
 
         //static List<string> bufferTrace;
-        static int BWNo = 0;
+        private static int BWNo = 0;
 
-        static Thread bufferWritingThread;
+        private static Thread bufferWritingThread;
 
         // class constructor
         static BufferedWriter()
@@ -1020,8 +1687,6 @@ namespace WorkingDogsCore
         public BufferedWriter(StreamWriter seqFile, int initialBufferSize, int noCallers, string tag)
         {
             BWNo++;
-            this.seqFile = seqFile;
-            this.newline = seqFile.NewLine.ToCharArray();
 
             int buffersWanted = noCallers * 2;
 

@@ -28,6 +28,53 @@ namespace WorkingDogsCore
             return firstFragmentOK && lastFragmentOK;
         }
 
+        // generate a pair going forward into a read/contig. The current kMer is at the start of the pair region, m --> first base of starting kMer
+        // XXXXXXXXXXXXXXXXxxxxxxxx----------------yyyyyyyyYYYYYYYYYYYYYYYY (24-mers & pair region length = 64)
+        // ^m              gggggggggggggggggggggggggggggggg
+        // --> XXXXXXXXXXXXXXXXYYYYYYYYYYYYYYYY
+        public static bool ConstructPairFwd(Sequence seq, int m, int pairGap, out ulong pair)
+        {
+            pair = 0;
+
+            // return if there's not enough room for a pair region
+            if (m + kMerPairs.pairFragmentSize * 2 + pairGap > seq.Length)
+                return false;
+
+            ulong firstFragment;
+            bool firstFragmentOK = Sequence.CondenseMer(seq, m, pairFragmentSize, out firstFragment);
+            ulong lastFragment;
+            bool lastFragmentOK = Sequence.CondenseMer(seq, (m + pairFragmentSize + pairGap), pairFragmentSize, out lastFragment);
+
+            pair = firstFragment | (lastFragment >> (64 - pairFragmentSize * 2));
+
+            return firstFragmentOK && lastFragmentOK;
+        }
+
+        // generate a pair going backwards into a read/contig. The current kMer is at the end of the pair region, m --> first base of last kMer
+        //                 gggggggggggggggggggggggggggggggg
+        // XXXXXXXXXXXXXXXXxxxxxxxx----------------yyyyyyyyYYYYYYYYYYYYYYYY (24-mers & pair length = 72)
+        //                                         ^m
+        // --> XXXXXXXXXXXXXXXXYYYYYYYYYYYYYYYY
+        public static bool ConstructPairRvs(Sequence seq, int m, int kMerSize, int pairGap, out ulong pair)
+        {
+            pair = 0;
+
+            int startOfPairRegion = (m + kMerSize) - (pairFragmentSize * 2 + pairGap);
+            // return if there's not enough room for a pair region
+            if (startOfPairRegion < 0)
+                return false;
+
+            ulong firstFragment;
+            bool firstFragmentOK = Sequence.CondenseMer(seq, startOfPairRegion, pairFragmentSize, out firstFragment);
+            ulong lastFragment;
+            bool lastFragmentOK = Sequence.CondenseMer(seq, startOfPairRegion+pairFragmentSize+pairGap, pairFragmentSize, out lastFragment);
+
+
+            pair = firstFragment | (lastFragment >> (64 - pairFragmentSize * 2));
+
+            return firstFragmentOK && lastFragmentOK;
+        }
+
         public static bool ConstructPair(Sequence seq, int m, int merSize, int pairGap, out ulong pair, out ulong firstMer, out ulong secondMer)
         {
             pair = 0;

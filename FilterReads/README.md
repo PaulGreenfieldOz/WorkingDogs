@@ -7,40 +7,41 @@ The kMer filters are simply sets of kMers tiled from a set of reference sequence
 
 Any number of filters can be specified in a single run, and they can be inclusive or exclusive. Reads that pass through FilterReads must have enough kMer matches onto any one 
 of the specified inclusive filters, and not have too many matches on any of the exclusive filters. Matches can be either exact (+f or -f)
-or single-base mismatches can be allowed. Generating single-base variants of large filters is very memory-hungry, so in this case small 'seed' matches are used first, and full variant generation is only done if the preceding 
-seed matches. This behaviour can be controlled with the -seedlength (-sl) option. 
+or single-base mismatches can be allowed (+fz or -fz). Generating single-base variants of large filters is very memory-hungry, so in this case small 'seed' matches are used first, and full variant generation is only done if the first 
+'seed' part of the kMer get an exact match. This behaviour can be controlled with the -seedlength (-sl) option. Small kMer filters are always fully turned into sets of variant kMers, and this behaviour can be forced for larger sets by setting '-seedlength' to zero. Seeded fuzzy matching is slower than exact matching as the kmer variants are generated on the fly (and cached).
 
 Example 1 below was written to filter bacterial 16S sequences from mixed human gut wall samples. 
 These samples were a mixture of human and microbial RNA/DNA and the filter pulled out the bacterial 16S while discarding the very similar human 18S and mitochondrial 16S sequences. 
-Example 2 shows that FilterReads can be used on contigs as well as reads, pulling out those contig from a fungal asssmbly that contain the aflatoxin gene region.
+Example 2 shows FilterReads being used as part of an incremental assembly pipeline, pulling out matches to a target genome from a metagenomic dataset. The matching reads were then assembled, and the resulting contigs used in the next FilterReads run to capture more of the reads matching onto the genome actually present in the metagenome.
 
-Pairs of reads can be processed as pairs, with either both members of the pair being selected or both reads being rejected. The '-bothinpair' option requires that both members of a pair meet the selection requirements, 
-and if either of them fail both the reads are deemed to have failed. This option can be used to focus in on the just the reads that come from a well-defined region. This option is equivalent to the previous '-pairs' option.
-the -eitherinpair option will select both reads in a pair if either of both of them pass the filtering tests. This option can be use to 
-expand out a matching region and is the basis of incremental filtering. If neither -bothinpair or -eitherinpair are chose, then every read file is processed separately and any read-pairing will be lost.
+Pairs of reads can be processed as pairs, with either both members of the pair being selected, or both reads being rejected. The '-bothinpair' option requires that both members of a pair meet the selection requirements, 
+and if either of them fail, both the reads are deemed to have failed. This option can be used to focus in on the just the reads that come from a well-defined region. This option is equivalent to the previous '-pairs' option.
+The -eitherinpair option will select both reads in a pair if either of them pass the filtering tests. This option can be used to 
+extend a matching region and is the basis of incremental filtering. If neither -bothinpair or -eitherinpair are chosen, then every read file is processed separately and any read-pairing will be lost.
 
 The -full option only allows a read to be regarded as matching if it gets kMer matches across its full length, even if the required identity 
 is fairly low. This option gives better quality matches, avoiding reads where all the matches come from a small region at one end.
 
 FilterReads is a command-line program with the following cryptic usage hint:  
 ```
-FilterReads -r tag -t threads [-pairs] [-matches] [-full] [-len minLen] [-s] [-qt minQual] [-o outputDir] [-fasta] [-discards] [+f|fz includeFilter minMatches[%|pct]] [-f|fz excludeFilter minMatches[%|pct]] readsFNs
+FilterReads -r tag -t threads [-bothinpair] [-eitherinpair] [-matches] [-full] [-len minLen] [-s] [-qt minQual] [-o outputDir] [-fasta] [-discards] [+f|fz includeFilter minMatches[%|pct]] [-f|fz excludeFilter minMatches[%|pct]] readsFNs
 ```  
 
 A typical run of FilterReads is…  
 `
-FilterReads -r 16S –t 8 –full –qt 30 +fz RefSeq16S_25.mer 50% W1_?.fastq  
+FilterReads -r 16S –t 8 –full -bothinpair –qt 30 +fz RefSeq16S_25.mer 50% W1_?.fastq  
 `  
 …which will filter whatever files match W1_?.fastq for those reads where at least 50% of their 25-mers 
 can be found in RefSeq16S_25.mer (a 25-mer filter built from RefSeq16S). Matches are required at 
 both ends of the read (-full), and the 25-mers are allowed to have single-base differences. 
-The filtered reads will be written to something like W1_1_16S.fastq.  
+The filtered reads will be written to something like W1_1_16S.fastq and W1_2_16S.fastq, with read-pairing maintained.  
 
 More complex examples are:
 
 1. `FilterReads -r 16S -t 8 +f current_prokMSA_unaligned_May2011_25.mer 10% -f Human_mitochondria_25.mer 20% -f human_18S_25.mer 20% GH_02d_ATCACG_R?.fastq`
 
-2. `FilterReads -r aflatoxin -t 16 +f aflatoxinGenes_25.mer 1000 Contigs\F36-HGM-57\contigs_F36-HGM-57-11.fa`
+2. `BuildFilter -k 25 -lcf Marinomonas_polaris_25.mer Marinomonas_polaris_GCF_900129155.1_IMG-taxon_2582581270_annotated_assembly_genomic.fna; 
+FilterReads -r Marinomonas_polaris -t 24 -eitherinpair -len 90 -sl 0 -o c:\SeqTemp\Amoeba -full -qt 25 +fz Marinomonas_polaris_25.mer 66pct Amoeba\PCRFree\11957_C9CRGANXX_CGATGTTT_L008_R?_noRepeat.fastq.gz`
 
 FilterReads -r tag [-t threads] [-bothinpair] [-eitherinpair] [-full] [-matches] [-len minLen] [-first nnnn] [-s] 
 [-qt minQual] [-o outputDir] [-fasta] [-discards] [+/-lcf] [+f|fz includeFilter minMatches[%|pct]] [-f|fz excludeFilter minMatches[%|pct]] readsFNs 
@@ -61,7 +62,7 @@ The full set of FilterReads parameters is:
 | +f *includeFilter minMatches[% pct]* or +fz *includeFilter minMatches[% pct]* | Inclusive filter. Reads must have the specified number of matches onto the kMers in this filter. The required number of matches can be a fixed number, such as 100, or a percentage of the read length, such as 50%. The % character is a bit special in some scripting languages so you can use ‘pct’, as in 50pct.  Matches can be exact (+f) or single -base mismatches can be allowed (+fz). Any number of these filters can be specified, and a successful match on any one of them is enough to declare that the read is matching. |
 | -f *excludeFilter minMatches[% pct]* or -fz *excludeFilter minMatches[% pct]* | Exclusive filter. Reads must not have more than the specified number of matches onto this filter. Any number of these filters can be specified, and a match on any of them is enough to declare that the read should be rejected. |
 | -s | Search for matching file names in any subdirectories as well as in the current directory. Default is to only look for matching file names in the current directory.  |
-| -matches | Writes out an alignment of matching kMers and reads. This option should only be used on small datasets.  |
+| -matches | Writes out an alignment of matching kMers and reads. This option should only be used on small datasets!  |
 | -discards | Save any reads that were dropped because they matched one of the exclusive filters. These reads are written to ‘_discards’ files. e.g. S1_270_reads_anonymous_R?_discards.fasta |
 | *readsFNP*  | List of file names/patterns of reads to be filtered. e.g. S1_270_reads_anonymous_R?.fasta.gz |
 

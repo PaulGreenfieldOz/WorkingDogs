@@ -36,7 +36,8 @@ namespace BuildFilter
                 return;
             }
 
-            int kMerSize = 0;
+            int kMerSize = 0;           // set from -k
+            int kMerSizeTop = 0;        // set from Top file
             bool filterLowComplexity = true;
             int minDepth = 1;
             int minLength = 0;
@@ -45,6 +46,7 @@ namespace BuildFilter
             bool recursiveFileSearch = false;
             int version = 2;
             bool canonical = true;
+            string topFN = null;
 
             for (int p = 0; p < args.Length; p++)
             {
@@ -94,6 +96,15 @@ namespace BuildFilter
                     if (args[p] == "-s")
                     {
                         recursiveFileSearch = true;
+                        continue;
+                    }
+
+                    if (args[p] == "-top")
+                    {
+                        if (!CheckForParamValue(p, args.Length, "file name expected after -top"))
+                            return;
+                        topFN = args[p+1];
+                        p++;
                         continue;
                     }
 
@@ -156,14 +167,14 @@ namespace BuildFilter
                 targetsList.Add(args[p]);
             }
 
-            if (targetsList == null)
+            if (targetsList.Count == 0 && topFN == null)
             {
-                Console.WriteLine("no target sequences specified");
+                Console.WriteLine("no files to tile!");
                 return;
             }
 
             // only one name specified - assume we'll just modify it to generate the mers file name
-            if (targetsList.Count == 1)
+            if (targetsList.Count == 1 && topFN == null)
                 mersFN = targetsList[0].Substring(0, targetsList[0].LastIndexOf('.')) + "_" + kMerSize + ".mer";
             else
             {
@@ -183,7 +194,7 @@ namespace BuildFilter
                     targetFNs.Add(FN);
             }
 
-            if (targetFNs.Count == 0)
+            if (targetFNs.Count == 0 && topFN == null)
             {
                 Console.WriteLine("no files found");
                 return;
@@ -204,7 +215,7 @@ namespace BuildFilter
                 cumulativeLength += fileLength;
             }
 
-            MerDictionary<int> distinctMers = new MerDictionary<int>(2*cumulativeLength, kMerSize);
+            MerDictionary<int> distinctMers = null;
 
             bool EOF = false;
             ulong[] merSet = new ulong[2000];
@@ -212,6 +223,51 @@ namespace BuildFilter
             DateTime start = DateTime.Now;
             int countSequences = 0;
             int tooShortCount = 0;
+
+            if (topFN != null)
+            {
+                StreamReader top = new StreamReader(topFN);
+                char[] tabSeparator = {'\t'};
+                // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA	TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT	21546228	12504997	34051225
+
+                while (!EOF) 
+                {
+                    string line = top.ReadLine();
+                    if (line == null)
+                        break;
+
+                    if (distinctMers == null)
+                    {
+                        kMerSizeTop = line.IndexOf('\t');
+                        FileInfo fi = new FileInfo(topFN);
+                        long fileLength = fi.Length;
+                        distinctMers = new MerDictionary<int>(fileLength, kMerSizeTop);
+                    }
+
+                    string[] splitLine = line.Split(tabSeparator);
+                    ulong kMer = kMers.CondenseMer(splitLine[0]);
+                    int sumDepth = Convert.ToInt32(splitLine[4]);
+
+                    distinctMers.Add(kMer, sumDepth);
+                }
+            }
+
+            if (kMerSize > 0 && kMerSizeTop > 0 && kMerSize != kMerSizeTop)
+            {
+                Console.WriteLine("told to use " + kMerSize + "-mers but top file contained " + kMerSizeTop + "-mers");
+                return;
+            }
+
+            if (kMerSize == 0 && targetFNs.Count > 0)
+            {
+                Console.WriteLine(" need a 'k' when tiling sequences");
+                return;
+            }
+
+            kMerSize = Math.Max(kMerSize, kMerSizeTop);
+
+            if (distinctMers == null)
+                distinctMers = new MerDictionary<int>(cumulativeLength * 2, kMerSize);
 
             foreach (string targetFN in targetFNs)
             {
@@ -279,6 +335,9 @@ namespace BuildFilter
                 tiledSeqs.Write(v2Header);
             }
 
+            Dictionary<ulong, int> distinctBits = new Dictionary<ulong, int>(100);
+            int[] baseCounts = new int[4];
+
             foreach (KeyValuePair<ulong, int> kvp in distinctMers)
             {
                 ulong mer = kvp.Key;
@@ -292,7 +351,7 @@ namespace BuildFilter
                 if (filterLowComplexity)
                 {
                     // just don't write out low complexity mers... 
-                    if (LowComplexityMer(kMerSize, mer) || LowComplexityMer(kMerSize, kMers.ReverseComplement(mer, kMerSize)))
+                    if (LowComplexityMer(kMerSize, mer, distinctBits, baseCounts))
                     {
                         skippedLC++;
                         //trace.WriteLine("- " + kMers.ExpandMer(mer, merSize));
@@ -331,24 +390,44 @@ namespace BuildFilter
 
         private static void WriteUsage()
         {
-            Console.WriteLine("usage: BuildFilter [-v1|-v2]  -k merSize [+/-lcf] [-mindepth nn] [-minlength nn] [-s] [filterFN] genesFN");
+            Console.WriteLine("usage: BuildFilter [-v1|-v1c|-v2c|-v2a] -k merSize [+/-lcf] [-mindepth nn] [-minlength nn] [-s] [filterFN] genesFN");
         }
 
-        private static bool LowComplexityMer(int merSize, ulong mer)
+        private static bool LowComplexityMer(int kMerSize, ulong kMer, Dictionary<ulong, int> distinctBits, int[] baseCounts)
         {
-            // check if any pairs or triplets of bases is dominant. 
-
-            Dictionary<ulong, int> distinctSet = new Dictionary<ulong, int>(merSize);
-            if (CheckForDiversity(merSize, mer, distinctSet, 2))
+            // check we're got at least 3 distinct bases in the kMer
+            int basesFound = DistinctBasesPresent(kMerSize, kMer, baseCounts);
+            if (basesFound < 3)
                 return true;
-            if (CheckForDiversity(merSize, mer, distinctSet, 3))
+            // check if any pairs or triplets or quads of bases are dominant. 
+            if (CheckForDiversity(kMerSize, kMer, distinctBits, 2))
+                return true;
+            if (CheckForDiversity(kMerSize, kMer, distinctBits, 3))
+                return true;
+            if (CheckForDiversity(kMerSize, kMer, distinctBits, 4))
                 return true;
 
             return false;
-
         }
 
-        private static bool CheckForDiversity(int merSize, ulong mer, Dictionary<ulong, int> distinctSet, int ptqSize)
+        private static int DistinctBasesPresent(int kMerSize, ulong kMer, int[] baseCounts)
+        {
+            kMer = kMer >> (64 - kMerSize * 2);
+            Array.Clear(baseCounts, 0, baseCounts.Length);
+            for (int i = 0; i < kMerSize; i++)
+            {
+                int baseBits = (int)(kMer & 0x0000000000000003);
+                baseCounts[baseBits]++;
+                kMer = kMer >> 2;
+            }
+            int basesFound = 0;
+            for (int i = 0; i < 4; i++)
+                if (baseCounts[i] > 1)
+                    basesFound++;
+            return basesFound;
+        }
+
+        private static bool CheckForDiversity(int kMerSize, ulong kMer, Dictionary<ulong, int> distinctSet, int ptqSize)
         {
             // 'ptqSize' is the size of the repeat targets - pairs, triplets or quads
             ulong ptqMask = 0xffffffffffffffff << (64 - (ptqSize * 2));     // mask for pair/triplet/quad at top ok
@@ -357,14 +436,18 @@ namespace BuildFilter
             //bool trace = true;
 
             // number of complete pairs/triplets in the kMer (overlapping)
-            int ptqInMer = merSize - ptqSize + 1;
-            ulong tempMer = mer;
+            //int ptqInMer = kMerSize / ptqSize;
+            int ptqInMer = kMerSize - ptqSize + 1;
+
+            ulong tempMer = kMer;
 
             // generate all 'ptq's and save their counts
+            //for (int b = 0; b < ptqInMer; b++)
             for (int b = 0; b < ptqInMer; b++)
             {
                 ulong topBits = tempMer & ptqMask;
                 tempMer = tempMer << 2;
+                //tempMer = tempMer << 2 * ptqSize;
                 if (distinctSet.ContainsKey(topBits))
                     distinctSet[topBits]++;
                 else
@@ -372,29 +455,46 @@ namespace BuildFilter
             }
 
             int maxCount = 0;
-            ulong maxKey = 0;
-            foreach (KeyValuePair<ulong, int> kvp in distinctSet)
+            int sumAtMax = 0;
+            foreach (int count in distinctSet.Values)
             {
-                int count = kvp.Value;
+                if (count == maxCount)
+                    sumAtMax += count;
                 if (count > maxCount)
                 {
-                    maxKey = kvp.Key;
                     maxCount = count;
+                    sumAtMax = count;
                 }
             }
             int secondCount = 0;
-            foreach (KeyValuePair<ulong, int> kvp in distinctSet)
+            int sumAtSecond = 0;
+            foreach (int count in distinctSet.Values)
             {
-                int count = kvp.Value;
-                if (kvp.Key != maxKey && count > secondCount)
+                if (count == secondCount)
+                    sumAtSecond += count;
+                if (count < maxCount && count > secondCount)
+                {
                     secondCount = count;
+                    sumAtSecond = count;
+                }
             }
 
-            int topTwoCount = maxCount + secondCount;
-            int cutOff = ptqInMer * 55/100;
-            if (secondCount == 1)
-                cutOff = ptqInMer / 2;
-            if (topTwoCount > cutOff)
+            int topCount = sumAtMax;
+            if (secondCount > 3)
+                topCount += sumAtSecond;
+            int cutOff = ptqInMer * 50 / 100;
+            if (secondCount > 3 && topCount < cutOff)
+            {
+                // collect any really close to second (end of seq effects)
+                foreach (int count in distinctSet.Values)
+                {
+                    if (count == secondCount - 1)
+                        sumAtSecond += count;
+                }
+                topCount += sumAtSecond;
+                cutOff = ptqInMer * 80 / 100;
+            }
+            if (topCount >= cutOff && maxCount > 3)
                 lacksDiversity = true;
 
             //if (trace && lacksDiversity)

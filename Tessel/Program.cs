@@ -537,7 +537,7 @@ namespace Tessel
 
             SortMerTables(noThreads, merTables);
 
-            sortingTimer.Stop();           
+            sortingTimer.Stop();
             //Console.WriteLine("memory at end of sorting: " + GC.GetTotalMemory(false));
 
             // wait for any in-flight singleton writes to complete (overlapped with sorting to give the writes more time)
@@ -586,7 +586,7 @@ namespace Tessel
                 programPhase = phases.loadingMers;
 
                 // clean up memory used by counting/merging/writing
-                merTables = null;
+                //merTables = null;
                 GC.Collect();
 
                 // tables used for pairs generation
@@ -623,8 +623,8 @@ namespace Tessel
                     return;
                 }
 
-                if (minCount > 1)
-                    presentDistinctMers = presentDistinctMers * 4;
+                //if (minCount > 1)
+                //    presentDistinctMers = presentDistinctMers * 4;
                 distinctPairs = new MerCollections.PairTable(presentDistinctMers, noThreads, 2 * kMerPairs.pairFragmentSize);
 
                 // calculate a gap size based on the first read

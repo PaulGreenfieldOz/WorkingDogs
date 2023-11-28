@@ -47,18 +47,26 @@ namespace WorkingDogsCore
                 read = ReadFASTA(reads, false, out readHeader);
             }
 
+            if (readFormat == formatSFA)
+            {
+                readHeader = reads.ReadLine();
+                if (readHeader == null)
+                    return null;
+                read = reads.ReadLine();
+            }
+
             return read;
         }
 
-        public static string ReadRead(StreamReader reads, int readFormat, out string header)
+        public static string ReadRead(StreamReader reads, int readFormat, out string readHeader)
         {
             string read = null;
-            header = "";
+            readHeader = "";
 
             if (readFormat == formatFASTQ)
             {
-                header = reads.ReadLine();
-                if (header == null)
+                readHeader = reads.ReadLine();
+                if (readHeader == null)
                     return null;
                 read = reads.ReadLine();
                 reads.ReadLine();
@@ -66,7 +74,15 @@ namespace WorkingDogsCore
             }
             if (readFormat == formatFNA)
             {
-                read = ReadFASTA(reads, false, out header);
+                read = ReadFASTA(reads, false, out readHeader);
+            }
+
+            if (readFormat == formatSFA)
+            {
+                readHeader = reads.ReadLine();
+                if (readHeader == null)
+                    return null;
+                read = reads.ReadLine();
             }
 
             return read;
@@ -89,15 +105,23 @@ namespace WorkingDogsCore
                 quals = reads.ReadLine();
             }
 
-            if (readFormat == formatFNA || readFormat == formatSFA)
+            if (readFormat == formatFNA)
             {
                 read = ReadFASTA(reads, false, out readHeader);
+            }
+
+            if (readFormat == formatSFA)
+            {
+                readHeader = reads.ReadLine();
+                if (readHeader == null)
+                    return null;
+                read = reads.ReadLine();
             }
 
             return read;
         }
 
-        public static string ReadRead(StreamReader readsFile, StreamReader qualsFile, int readFormat, out string readHeader, out string qualHeader, out string quals)
+        public static string ReadRead(StreamReader reads, StreamReader qualsFile, int readFormat, out string readHeader, out string qualHeader, out string quals)
         {
             string read = null;
             readHeader = null;
@@ -106,19 +130,19 @@ namespace WorkingDogsCore
 
             if (readFormat == formatFASTQ)
             {
-                readHeader = readsFile.ReadLine();
+                readHeader = reads.ReadLine();
                 if (readHeader == null)
                     return null;
-                read = readsFile.ReadLine();
-                qualHeader = readsFile.ReadLine();
-                quals = readsFile.ReadLine();
+                read = reads.ReadLine();
+                qualHeader = reads.ReadLine();
+                quals = reads.ReadLine();
             }
 
-            if (readFormat == formatFNA || readFormat == formatSFA)
+            if (readFormat == formatFNA)
             {
                 try
                 {
-                    read = ReadFASTA(readsFile, false, out readHeader);
+                    read = ReadFASTA(reads, false, out readHeader);
                 }
                 catch (Exception e)
                 {
@@ -135,6 +159,14 @@ namespace WorkingDogsCore
                         quals = qualsSeq.ToString();
                     }
                 }
+            }
+
+            if (readFormat == formatSFA)
+            {
+                readHeader = reads.ReadLine();
+                if (readHeader == null)
+                    return null;
+                read = reads.ReadLine();
             }
 
             return read;
@@ -668,6 +700,8 @@ namespace WorkingDogsCore
         {
             // split the file name/pattern if necessary
             int lastFS = mappingFNP.LastIndexOf(Path.DirectorySeparatorChar);
+            if (lastFS == -1)
+                lastFS = mappingFNP.LastIndexOf(Path.AltDirectorySeparatorChar);
             fnPart = mappingFNP;
             dirPart = Directory.GetCurrentDirectory();
             if (lastFS >= 0)
@@ -1747,6 +1781,15 @@ namespace WorkingDogsCore
             return buffer;
         }
 
+        public void ReturnWriteBuffer(WriteBuffer buffer)
+        // only meant to be used to return unused buffers on termination. Writing thread return buffers to available set after flushing.
+        {
+            lock (availableBuffers)
+            {
+                availableBuffers.Add(buffer);
+            }
+        }
+
         private WriteBuffer FindFreeBuffer()
         {
             WriteBuffer buffer = null;
@@ -1937,14 +1980,17 @@ namespace WorkingDogsCore
                 for (int i = 0; i < readBuffers.Length; i++)
                 {
                     WriteBuffer buffer = readBuffers[i];
-                    buffer.setIdx = bufferIdx;
-                    buffer.setSize = noOfBuffers;
-                    queuedBuffers.Enqueue(buffer);
-                    //lock (bufferTrace)
-                    //{
-                    //    bufferTrace.Add("queued read buffer " + buffer.bufferNo + " for " + buffer.tag + " " + buffer.currentIdx + "/" + buffer.capacity + " bytes");
-                    //}
-                    bufferIdx++;
+                    if (buffer != null)
+                    {
+                        buffer.setIdx = bufferIdx;
+                        buffer.setSize = noOfBuffers;
+                        queuedBuffers.Enqueue(buffer);
+                        //lock (bufferTrace)
+                        //{
+                        //    bufferTrace.Add("queued read buffer " + buffer.bufferNo + " for " + buffer.tag + " " + buffer.currentIdx + "/" + buffer.capacity + " bytes");
+                        //}
+                        bufferIdx++;
+                    }
                 }
 
                 if (qualBuffers != null)

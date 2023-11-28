@@ -329,7 +329,6 @@ namespace WorkingDogsCore
                 higherDepth = plusCount;
             }
 
-            unbalanced = false;
             int summedDepth = plusCount + rcCount;
             unbalanced = lowerDepth < minDepth &&
                             summedDepth > 20 ? (lowerDepth * 10 < higherDepth) : lowerDepth <= 1;

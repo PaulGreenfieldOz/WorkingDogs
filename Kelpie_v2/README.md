@@ -1,6 +1,6 @@
 # Kelpie V2.1 
 
-Kelpie V2.1 is now available. Kelpie was ported to .NET6/7 and native code is now available for most platforms. Porting 
+Kelpie V2.1 is now available. Kelpie was ported to .NET6/7/8 and native code is now available for most platforms. Porting 
 to .NET has also enabled the direct processing of gzipped (.gz) sequence data files. V2.2.1 fixed a typo that forced the use of 'length'. 
 
 # Kelpie usage
@@ -51,7 +51,8 @@ For example:
 Kelpie is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
 files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Kelpie is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
+for instructions. Kelpie is ‘installed’ simply by copying its code file to an appropriate directory on your system. The Linux .NET 8 compilations were done using Ubuntu 22. The .NET 6 and 7 compilations
+were done using Ubuntu 18 to target an older glibc version. 
 
 You can compile Kelpie yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
 The Kelpie code itself is in Program.cs in this directory, and you'll also need to download 
@@ -64,7 +65,7 @@ Properties/PublishProfiles directory, for both framework-dependent and AOT compi
 build Kelpie executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
 parts of the platform run-time are linked into the executables. Pre-built Kelpie code is provided for Windows and Linux, and 
 .NET SDKs are available that will allow Kelpie to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
+Ubuntu 18 (and 22 for v8) and tested on Ubuntu 22 and SUSE LES 15. 
 
 The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
 framework-dependent x64 Linux Kelpie executable, and other versions can be build by changing the name of the profile file in the 

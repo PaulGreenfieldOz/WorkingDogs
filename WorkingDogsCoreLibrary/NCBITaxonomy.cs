@@ -1,6 +1,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 
 namespace WorkingDogsCore
@@ -47,9 +48,12 @@ namespace WorkingDogsCore
                 }
             }
             namesFile.Close();
+
+            Console.WriteLine("NCBI: loaded " + nameToTaxId.Count + " names");
+
         }
 
-        public static void LoadNodeFile(string nodesFN, Dictionary<int, int> taxIdToParent, Dictionary<int, string> taxIdToRank)
+        public static void LoadNodeFile(string nodesFN, Dictionary<int, int> taxIdToParent, Dictionary<int, string> taxIdToRank, Dictionary<int, List<int>> taxIdToChildren)
         {
             StreamReader nodesFile = new StreamReader(nodesFN);
             bool EOF = false;
@@ -72,10 +76,13 @@ namespace WorkingDogsCore
 
                 taxIdToParent.Add(taxId, parentTaxId);
                 taxIdToRank.Add(taxId, rank);
+                if (!taxIdToChildren.ContainsKey(parentTaxId))
+                    taxIdToChildren.Add(parentTaxId, new List<int>());
+                taxIdToChildren[parentTaxId].Add(taxId);
             }
             nodesFile.Close();
 
-            Console.WriteLine("loaded " + taxIdToParent.Count + " taxIds");
+            Console.WriteLine("NCBI: loaded " + taxIdToParent.Count + " nodes");
         }
 
         public static void LoadSupplement(string supplementFN, Dictionary<int, int> taxIdToParent, Dictionary<int, string> taxIdToRank, Dictionary<string, List<int>> nameToTaxId, Dictionary<int, string> taxIdToName)
@@ -251,7 +258,7 @@ namespace WorkingDogsCore
 
             supplementFile.Close();
 
-            Console.WriteLine("added " + namesAdded + ", changed " + namesChanged + ", deleted " + namesDeleted + ", replaced " + namesReplaced);
+            Console.WriteLine("NCBI: added " + namesAdded + ", changed " + namesChanged + ", deleted " + namesDeleted + ", replaced " + namesReplaced);
         }
 
         public static void SynonymsForNames(Dictionary<string, List<int>> nameToTaxId, Dictionary<int, string> taxIdToName, Dictionary<string, List<string>> nameToSynonyms)

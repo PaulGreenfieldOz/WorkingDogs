@@ -526,8 +526,7 @@ namespace WorkingDogsCore
         {
             int variantsAdded = 0;
 
-            //ulong baseMask = 0xffffffffffffffff << (32 - merSize + 1) * 2;
-            ulong baseMask = 0xffffffffffffffff << (merSize + 1) * 2;
+            ulong baseMask = 0xffffffffffffffff << (32 - merSize + 1) * 2;
             ulong merWithHole = mer & baseMask;
             for (ulong b = 0; b <= 3; b++)
             {

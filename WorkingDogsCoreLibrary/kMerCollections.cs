@@ -5,6 +5,7 @@ using System.Text;
 using System.IO;
 using System.Threading;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace WorkingDogsCore
 {
@@ -521,8 +522,7 @@ namespace WorkingDogsCore
         int currentPartition = 0;           // current partition being loaded
         int cpi = 0;                        // index into partition buffer currently being filled (via Add calls)
         int currentBuffer = 0;
-        IAsyncResult iarCopyToTable;
-        CopyToTableDelegate ctd;
+        Task tableCopying = null;           // last async table copying task
 
         int noParts = 0;                    // how many partitions
         int keyBaseShift = 0;               // # of bits to shift to get partition-key bases (bits)
@@ -550,7 +550,6 @@ namespace WorkingDogsCore
                     orderedMers[b] = new ulong[scaledPartitionLength];
                     orderedValues[b] = new TV[scaledPartitionLength];
                 }
-                ctd = new CopyToTableDelegate(CopyToTable);
 
                 pmers = new kMerDictionary<TV>[noParts];
 
@@ -574,15 +573,15 @@ namespace WorkingDogsCore
                 if (key > partitionBoundaries[currentPartition])
                 {
                     //Console.WriteLine(cpi + " mers added to partition " + currentPartition);
-                    // wait for previous buffer copy to complete
-                    if (iarCopyToTable != null && !iarCopyToTable.IsCompleted)
-                    {
-                        //Console.WriteLine("waiting for copy to finish");
-                        iarCopyToTable.AsyncWaitHandle.WaitOne();
-                    }
+
+                    if (tableCopying != null)
+                        tableCopying.Wait();
+
                     //Console.WriteLine("calling copy for partition " + currentPartition + " for buffer " + currentBuffer);
-                    iarCopyToTable = ctd.BeginInvoke(currentPartition, orderedMers[currentBuffer], orderedValues[currentBuffer], cpi, merSize, null, null);
-                    //CopyToTable(currentPartition, orderedMers[currentBuffer], orderedValues[currentBuffer], cpi);
+                    int cbi = currentBuffer;
+                    int cp = currentPartition;
+                    int count = cpi;
+                    tableCopying = Task.Run(() => CopyToTable(cp, orderedMers[cbi], orderedValues[cbi], count, merSize));
 
                     if (currentBuffer == 0)
                         currentBuffer = 1;
@@ -614,8 +613,6 @@ namespace WorkingDogsCore
             }
         }
 
-        private delegate void CopyToTableDelegate(int partitionNo, ulong[] orderedMers, TV[] orderedValues, int merCount, int merSize);
-
         private void CopyToTable(int partitionNo, ulong[] orderedMers, TV[] orderedValues, int merCount, int merSize)
         {
             //Console.WriteLine("starting copy for partition " + partitionNo);
@@ -640,11 +637,7 @@ namespace WorkingDogsCore
             if (partitioned)
             {
                 // wait for previous buffer copy to complete
-                if (iarCopyToTable != null && !iarCopyToTable.IsCompleted)
-                {
-                    //Console.WriteLine("waiting for copy to finish before final copy");
-                    iarCopyToTable.AsyncWaitHandle.WaitOne();
-                }
+                tableCopying.Wait();
 
                 // copy final buffer into its hash table partition
                 //Console.WriteLine("calling copy from LoadFinished for partition " + currentPartition + " for buffer " + currentBuffer);

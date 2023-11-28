@@ -1,0 +1,13 @@
+#ubuntu 18
+./BuildBuildFilter_Linux64DN6FD.sh
+./BuildBuildFilter_Linux64DN7AOT.sh
+./BuildBuildFilter_Linux64DN7FD.sh
+#ubuntu 22
+./BuildBuildFilter_Linux64DN8AOT.sh
+./BuildBuildFilter_Linux64DN8FD.sh
+#windows
+./BuildBuildFilter_Win64DN6FD.ps1
+./BuildBuildFilter_Win64DN7AOT.ps1
+./BuildBuildFilter_Win64DN7FD.ps1
+./BuildBuildFilter_Win64DN8AOT.ps1
+./BuildBuildFilter_Win64DN8FD.ps1

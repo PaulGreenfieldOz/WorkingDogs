@@ -1,0 +1,55 @@
+#ubuntu 18
+./BuildFilterReads_Linux64DN6FD.sh
+./BuildFilterReads_Linux64DN7AOT.sh
+./BuildFilterReads_Linux64DN7FD.sh
+#ubuntu 22
+./BuildFilterReads_Linux64DN8AOT.sh
+./BuildFilterReads_Linux64DN8FD.sh
+#windows
+./BuildFilterReads_Win64DN6FD.ps1
+./BuildFilterReads_Win64DN7AOT.ps1
+./BuildFilterReads_Win64DN7FD.ps1
+./BuildFilterReads_Win64DN8AOT.ps1
+./BuildFilterReads_Win64DN8FD.ps1
+
+#ubuntu 18
+./BuildBuildFilter_Linux64DN6FD.sh
+./BuildBuildFilter_Linux64DN7AOT.sh
+./BuildBuildFilter_Linux64DN7FD.sh
+#ubuntu 22
+./BuildBuildFilter_Linux64DN8AOT.sh
+./BuildBuildFilter_Linux64DN8FD.sh
+#windows
+./BuildBuildFilter_Win64DN6FD.ps1
+./BuildBuildFilter_Win64DN7AOT.ps1
+./BuildBuildFilter_Win64DN7FD.ps1
+./BuildBuildFilter_Win64DN8AOT.ps1
+./BuildBuildFilter_Win64DN8FD.ps1
+
+#ubuntu 18
+./BuildKelpie_Linux64DN6FD.sh
+./BuildKelpie_Linux64DN7AOT.sh
+./BuildKelpie_Linux64DN7FD.sh
+#ubuntu 22
+./BuildKelpie_Linux64DN8AOT.sh
+./BuildKelpie_Linux64DN8FD.sh
+#windows
+./BuildKelpie_Win64DN6FD.ps1
+./BuildKelpie_Win64DN7AOT.ps1
+./BuildKelpie_Win64DN7FD.ps1
+./BuildKelpie_Win64DN8AOT.ps1
+./BuildKelpie_Win64DN8FD.ps1
+
+#ubuntu 18
+./BuildTessel_Linux64DN6FD.sh
+./BuildTessel_Linux64DN7AOT.sh
+./BuildTessel_Linux64DN7FD.sh
+#ubuntu 22
+./BuildTessel_Linux64DN8AOT.sh
+./BuildTessel_Linux64DN8FD.sh
+#windows
+./BuildTessel_Win64DN6FD.ps1
+./BuildTessel_Win64DN7AOT.ps1
+./BuildTessel_Win64DN7FD.ps1
+./BuildTessel_Win64DN8AOT.ps1
+./BuildTessel_Win64DN8FD.ps1

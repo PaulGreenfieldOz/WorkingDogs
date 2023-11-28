@@ -48,7 +48,8 @@ The full set of Blue parameters is:
 Blue is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
 files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
+for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. The Linux .NET 6 & 7 code files
+have been compiled on Ubuntu 18, and the .NET 8 code under Ubuntu 22. If you have glibc version issues, try one of the other versions.
 
 You can compile Blue yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
 The Blue code itself is in Program.cs in this directory, and you'll also need to download the files

@@ -5,6 +5,8 @@ using System.IO;
 using System.Diagnostics;
 using System.Threading;
 using WorkingDogsCore;
+using System.IO.Compression;
+using System.Runtime.Versioning;
 
 namespace Blue
 {
@@ -23,7 +25,8 @@ namespace Blue
     //                  [-good nn%] : discard reads that are not at least this long after correction/trimming. Default is 70%.
     //                  [-paired] : handle pairs of read files as paired (both need to be good/corrected)
     //                  [-unpaired] : don't treat pairs of files as pair sets
-    //                  [-o outputDir] : directory for corrected reads etc  
+    //                  [-o outputDir] : directory for corrected reads etc
+    //                  [-unzip] : write output files unzipped, even if input files are zipped
     //
     // The first filename-like parameter (not preceded by a '-') is the k-mer consensus table (.cbt file).
     // This is followed by a list of file names or patterns for the sequence data files to be corrected. 
@@ -127,7 +130,7 @@ namespace Blue
 
     class Program
     {
-        const string version = "2.2.0";             // version - update on every significant change
+        const string version = "2.2.1";             // version - update on every significant change
 
         // internal performance analysis options
         const bool perfTrace = false;               // save performance stats for each read
@@ -205,6 +208,7 @@ namespace Blue
         // this will be set automatically by looking at the file names/content if not explicitly set by a parameter
         static bool pairingSpecified = false;       // pairing parameter set explicitly - so don't set by default
         static bool pairedReads = false;            // do we correct reads in sets or singly? (true by default if we have multiple input files)
+        static bool keepUnzipped = false;           // don't compress output files, even though input files are compressed
         static bool fullQualHeaders = false;        // do the reads use full FASTQ qual headers or just "+"?
         static int qualBase = 0;                    // qual offset for fastq reads. Set to 33 or 64 once format is known. Set to 0 for Fasta files
         static char replacementQual = (char)35;     // qual value used for fixed/inserted bases. (0-40)
@@ -485,6 +489,13 @@ namespace Blue
                         continue;
                     }
 
+                    if (args[p] == "-unzip")
+                    {
+                        keepUnzipped = true;
+                        //Console.WriteLine("-unzip");
+                        continue;
+                    }
+
                     if (args[p] == "-fixed")
                     {
                         readsFixedLength = true;
@@ -710,8 +721,8 @@ namespace Blue
 
             // calculate the min load depth from the min reps depth - don't need to load all of the singletons and other errors into memory
             minLoadDepth = requestedMinDepth / 5;
-            if (minLoadDepth <= 1)
-                minLoadDepth = 2;
+            if (minLoadDepth < 1)
+                minLoadDepth = 1;
 
             // find out who we are so we can track what program & args produced the result files
             Process myProcess = Process.GetCurrentProcess();
@@ -937,6 +948,13 @@ namespace Blue
                     GetPathFN(fullReadsFN, out readsPath, out readsFN);
                     string fileSuffix = readsFN.Substring(readsFN.LastIndexOf('.'));
                     string fileWithoutSuffix = readsFN.Substring(0, readsFN.LastIndexOf('.'));
+                    bool gzFile = false;
+                    if (fileSuffix == ".gz")
+                    {
+                        gzFile = true;
+                        fileSuffix = fileWithoutSuffix.Substring(fileWithoutSuffix.LastIndexOf('.'));
+                        fileWithoutSuffix = fileWithoutSuffix.Substring(0, fileWithoutSuffix.LastIndexOf('.'));
+                    }
 
                     readsFiles[f] = SeqFiles.OpenSeqStream(fullReadsFN);
                     bufferedReadsFiles[f] = new BufferedReader(readsFormat, readsFiles[f], qualFiles[f]);
@@ -945,7 +963,7 @@ namespace Blue
 
                     if (readsFormat == SeqFiles.formatFNA)
                     {
-                        string qualFN = fileWithoutSuffix + ".qual";
+                        string qualFN = gzFile ? fileWithoutSuffix + ".qual.gz" : fileWithoutSuffix + ".qual";
                         if (File.Exists(qualFN))
                             qualFiles[f] = SeqFiles.OpenSeqStream(qualFN);
                     }
@@ -954,7 +972,18 @@ namespace Blue
 
                     int initialBufferSize = batchSize * (defaultHeaderLength + 1 + defaultReadLength * 2 + 4 * 2); // typical fastq
 
-                    healedReads[f] = new StreamWriter(outputPath + fileWithoutSuffix + "_" + runName + fileSuffix, false, readsFiles[f].CurrentEncoding, 10000);
+                    if (!gzFile || keepUnzipped)
+                    {
+                        string healedFN = outputPath + fileWithoutSuffix + "_" + runName + fileSuffix;
+                        healedReads[f] = new StreamWriter(healedFN, false, Encoding.ASCII, 500000);
+                    }
+                    else
+                    {
+                        string healedFN = outputPath + fileWithoutSuffix + "_" + runName + fileSuffix + ".gz";
+                        FileStream compressedFileStream1 = File.Create(healedFN);
+                        GZipStream compressor1 = new GZipStream(compressedFileStream1, CompressionMode.Compress);
+                        healedReads[f] = new StreamWriter(compressor1, Encoding.ASCII, 500000);
+                    }
                     bufferedHealedReads[f] = new BufferedWriter(healedReads[f], initialBufferSize, noHealingThreads, "healed");
 
                     if (pairedReads)
@@ -1238,7 +1267,7 @@ namespace Blue
         private static void WriteUsage()
         {
             Console.WriteLine("usage: Blue [-help] [-r run] -m minReps [-f fasta|fastq] [-hp] [-t threads] [-l length] [-fixed] [-variable] [-good nn%] [-problems] [-extend nn]" +
-                                    " [-output dir] [-paired] [-unpaired] k-merFN readsFNs or patterns (" + version + ")");
+                                    " [-output dir] [-paired] [-unpaired] [-unzip] k-merFN readsFNs or patterns (" + version + ")");
         }
 
         private static void WriteUsageFull()
@@ -1260,6 +1289,7 @@ namespace Blue
                                 "\t[-unpaired] : don't treat pairs of files as pair sets. Each file will be corrected separately.\n" +
                                 "\t[-s|stats name] : name of stats file (constructed from first seq file name if not provided).\n" +
                                 "\t[-o|output outputDir] : directory for corrected reads etc" +
+                                "\t[-unzip] : write output files unzipped, even if input files are zipped" +
                                 "\t k-mer file : .cbt file created by Tessel. The same name is used to find the pairs file (.prs) if it exists\n");
         }
 
@@ -1627,7 +1657,7 @@ namespace Blue
             }
 
             const bool breakOnRead = false;            
-            if (breakOnRead && (originalRead.Matches("TAAATCTAATTGGTATAATATAATATATCAAACTAATAATTTAATATTAATTATTAGTTCGATTGTAGTAGTAGGTTCTGTAACAATTTTAGGATATAAA") ||
+            if (breakOnRead && (originalRead.Matches("AGTCAAGTATTCGTCTTCTTTGATTGAATGTTTGGGTTGAGATATTGGATGAAGCAAATATATTGGAGTCTAATTTGATATGTATTTAGACTCTAATAAAA") ||
                                 readHeader.Matches("@SRR617721.7393796 SOLEXA4:20:D0V34ACXX:1:2114:5208:49282 length=101")))
             {
                 // force tracing for this read if we're not already tracing (but changing trace state is not threadsafe...)
@@ -3172,7 +3202,7 @@ namespace Blue
                             readProps.hmZeroPresent = MerIsHomopolymer(lastMer);
                     }
 
-                    if (summedDepth >= requestedMinDepth && (plusCount < rcCount * balancedFactor && rcCount < plusCount * balancedFactor))
+                    if (summedDepth >= requestedMinDepth && Math.Max(plusCount, rcCount) > balancedFactor && (plusCount < rcCount * balancedFactor && rcCount < plusCount * balancedFactor))
                     {
                         readProps.balancedDepths[i] = true;
                         balancedCount++;
@@ -3385,6 +3415,10 @@ namespace Blue
 
             OKDepth = OKMerMean / 3;                                    // OK depth to the average of the lower depths
             minDepth = OKDepth / 2;                                     // and 'min' to 1/2 of this OK level *** check ***
+            if (OKDepth == 0)
+                OKDepth = 1;
+            if (minDepth == 0)
+                minDepth = 1;
             if (minDepth > lowestBalancedDepth)
                 minDepth = lowestBalancedDepth - 1;                     // never set acceptable/bad boundary higher than the lowest balanced kMer
 
@@ -3469,8 +3503,10 @@ namespace Blue
 
             //OKPairDepth = OKDepth * 2 / 3;
             //minPairDepth = OKPairDepth / 2;
-            //if (minPairDepth == 0)
-            //    minPairDepth = 1;
+            if (minPairDepth == 0)
+                minPairDepth = 1;
+            if (OKPairDepth == 0)
+                OKPairDepth = 1;
 
             readProps.minPairDepth = minPairDepth;
             readProps.OKPairDepth = OKPairDepth;
@@ -3841,6 +3877,8 @@ namespace Blue
 
                     if (unbalancedStartingMer && !unbalancedAlternative)
                         targetMinDepth = minDepth / 2;
+                    if (targetMinDepth == 0)
+                        targetMinDepth = 1;
 
                     if (depth >= targetMinDepth)
                     {
@@ -5762,7 +5800,6 @@ namespace Blue
 
         static void RateReporter()
         {
-            int monitorCounter = 0;
             DateTime lastTimeAwake = DateTime.Now;
             long lastReadsCount = 0;
 
@@ -5772,23 +5809,18 @@ namespace Blue
                 if (stopReporter)
                     break;
 
-                monitorCounter += monitorInterval;
-                if (monitorCounter >= reportInterval)
-                {
-                    monitorCounter = 0;
-                    DateTime timeNow = DateTime.Now;
-                    double timeTaken = (timeNow - lastTimeAwake).TotalSeconds;
-                    lastTimeAwake = timeNow;
-                    long currentReadsCount = progressReads;
-                    long readsInTime = currentReadsCount - lastReadsCount;
-                    lastReadsCount = currentReadsCount;
-                    int readsRate = (int)((double)readsInTime / timeTaken);
+                DateTime timeNow = DateTime.Now;
+                double timeTaken = (timeNow - lastTimeAwake).TotalSeconds;
+                lastTimeAwake = timeNow;
+                long currentReadsCount = progressReads;
+                long readsInTime = currentReadsCount - lastReadsCount;
+                lastReadsCount = currentReadsCount;
+                int readsRate = (int)((double)readsInTime / timeTaken);
 
-                    if (programPhase == ProgramPhase.loading)
-                        Console.WriteLine("loading kMers and pairs");
-                    if (programPhase == ProgramPhase.healing)
-                        Console.WriteLine(progressHealedReads + " healed" + ", " + progressOKReads + " OK from " + currentReadsCount + " reads at " + readsRate + " rps");
-                }
+                if (programPhase == ProgramPhase.loading)
+                    Console.WriteLine("loading kMers and pairs");
+                if (programPhase == ProgramPhase.healing)
+                    Console.WriteLine(progressHealedReads + " healed" + ", " + progressOKReads + " OK from " + currentReadsCount + " reads at " + readsRate + " rps");
             }
         }
     }

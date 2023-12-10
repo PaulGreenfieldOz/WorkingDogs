@@ -6,7 +6,8 @@ Blue v2 tries to ensure that all the reads it are completely corrected, and uses
 
 The overall result of this change, and numerous others, is much improved accuracy (in relative terms). On the E. coli DH10B dataset referred to in the paper, Blue now has 99.98% of the corrected (and possibly trimmed) reads aligning with zero changes against the reference sequence, up from 99.90% previously (with _–good 80_ used in both cases).
 
-Blue v2.2 is a port onto the .NET platform. This port changes the way Blue is comiled/built, and also allows the direct processing of gzipped sequence data files (no need to unzip first).
+Blue v2.2 is a port onto the .NET platform. This port changes the way Blue is compiled/built, and also allows the direct processing of gzipped sequence data files (no need to unzip first).
+v2.2.1 fixed a bug in the writing of .gz files, and imporved support for correcting metagenomes with extremely low coverage reads (use -min 1 in Tessel and Blue). Also added -unzip option as writing .gz files is slow.
 
 The first step in using Blue is to generate a set of kMers (and kMer pairs) using Tessel. Tessel will also generate a histogram of the kMer repetition frequency that you can use to set the _minReps_ parameter for your Blue run. Once you have a set of kMers (a .cbt file), and (preferably) a set of corresponding kMer pairs (a .prs file), you can go ahead and correct your reads. Blue is a command-line program with the following cryptic usage hint:
 ```

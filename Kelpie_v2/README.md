@@ -1,28 +1,31 @@
-# Kelpie V2.1 
+# Kelpie V2.2 
 
-Kelpie V2.1 is now available. Kelpie was ported to .NET6/7/8 and native code is now available for most platforms. Porting 
-to .NET has also enabled the direct processing of gzipped (.gz) sequence data files. V2.2.1 fixed a typo that forced the use of 'length'. 
+Kelpie V2.2 is now available. Kelpie was ported to .NET6/7/8 as part of the v2.1 release and native code is now available for most platforms. Porting 
+to .NET has also enabled the direct processing of gzipped (.gz) sequence data files. V2.2 adds support for the use of paired-reads
+for resolving forks in the tree exploration. This feature is most useful for longer amplicons, such as full-length 16S. V2.2 also revises
+the code that uses long kMer pairs (contexts) to resolve potential forks, and also detects and trims remnant adapter sequences from starting
+reads. 
 
 # Kelpie usage
 
 Kelpie usage is basically unchanged with this release, although there are new options to enable new functionality.
 ```
-usage: Kelpie [-h] [-t #thrds] -f forwardPrimer -r reversePrimer WGSReadsFNP extendedReadsFN (V2.0.10)
+usage: Kelpie [-h] [-t #thrds] -f forwardPrimer -r reversePrimer [-filtered|-unfiltered] WGSReadsFNP extendedReadsFN (V2.0.10)
        -h                - Write out this extended help and exit
        -threads nn       - max parallel threads to allow. max will use all available (default)
        -f forwardPrimer e.g. GTGYCAGCMGCCGCGGTAA
        -r reversePrimer e.g. GGACTACNVGGGTWTCTAAT
+       -filtered         - (default) WGS reads have been pre-filtered down to the genomic region of interest.
+                           This (small) read set will be kept in memory for faster processing during filter construction.
+       -unfiltered       - WGS reads were not pre-filtered and will be re-read from files as needed.
        WGSreadsFNP       - List of file names/patterns of reads to be processed. e.g. S1_270_reads_anonymous_R?_16S.fasta
        extendedReadsFN   - File name for extended between-primer reads. e.g. S1_270_reads_anonymous_16S_V4.fasta
 
 Less commonly needed options (most can often be ignored)
-       -filtered         - (default) WGS reads have been pre-filtered down to the genomic region of interest.
-                           This (small) read set will be kept in memory for faster processing during filter construction.
-       -unfiltered       - WGS reads were not pre-filtered and will be re-read from files as needed.
        -strict           - kMers used for final reads filtering must be found in both files of a pair. (default)
        -loose            - Opposite of -strict, all kMers are use for filtering.
        -paired|unpaired  - Use -paired if you have paired-end reads, and -unpaired if you want to force pairs of reads files to be processed individually.
-                           Default is to assume pairs of reads files are paired. Only used when cleaning final kMer filter table with -strict.
+                           Default is to assume pairs of reads files are paired. 
        -mismatches m[+n] - Allow up to mm mismatches in the 3' or 5' ends of a primer. Default is 1. Only increase for long imprecise primers. AKA -mm.
        -min nn           - Minimum length accepted after assembly/extension, even if terminal primer not found. Default is that all extended 'amplicons' must finish with a terminating primer.
        -length nn[-mm]   - Expected length of targeted region/amplicon, including primers, e.g. 295 for 16SV4. Either a single length or a range can be specified.
@@ -72,6 +75,21 @@ framework-dependent x64 Linux Kelpie executable, and other versions can be build
 publish command.
 
 ### Release notes
+
+### V2.2.0
+
+* Paired-reads are now used to resolve some potential branches when choosing between multiple 'next' kMers. The list of possible next 
+kMers is first trimmed by using long kMers, up to the length of a read, and if there are still multiple possible paths, these
+alternative kMers are checked for paired-read support. If there are still multiple choices, these paths are explored recursively as before.
+Paired-reads are most useful when extracting amplicons which are much bigger than any single read, such as 27F-1492R 16S. 
+The paired-read code will only work with paired reads. If you are using a filter to extract target-region reads from a WGS
+dataset prior to running Kelpie, you should make sure the filtered reads have kept their pairings. If you are usig FilterReads, 
+you should be using the -bothinpair or -eitherinpair options.
+* Adapter sequences are detected and trimmed. Adapter sequences are trimmed from starting reads at the beginning of the filter-building step. 
+Subsequent filter-building iterations won't build on these primer+adapter sequences, effectively removiing them from the filter 
+and the set of reads used for kMer table construction and extension. 
+* The context-checking code has been revised, and it now checks from longest context to shortest. This change results in more branches
+being resolved by contexts and slightly improved accuracy.
 
 ### V2.1.0
 

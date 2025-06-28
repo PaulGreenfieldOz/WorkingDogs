@@ -1,10 +1,7 @@
-# Kelpie V2.2 
+# Kelpie V2.3 
 
-Kelpie V2.2 is now available. Kelpie was ported to .NET6/7/8 as part of the v2.1 release and native code is now available for most platforms. Porting 
-to .NET has also enabled the direct processing of gzipped (.gz) sequence data files. V2.2 adds support for the use of paired-reads
-for resolving forks in the tree exploration. This feature is most useful for longer amplicons, such as full-length 16S. V2.2 also revises
-the code that uses long kMer pairs (contexts) to resolve potential forks, and also detects and trims remnant adapter sequences from starting
-reads. 
+Kelpie V2.3 (2.3.4) is now available. V2.3 makes better use of paired-reads to decide between plausible paths; multi-threads the final (extension) phase for better performance; 
+supports multiple forward or reverse primers (e.g.-f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA); and the extended sequences can be written out dereplicated (with size= annotations). 
 
 # Kelpie usage
 
@@ -34,8 +31,9 @@ Less commonly needed options (most can often be ignored)
        -noLCF            - no low-complexity filter. Low complexity kMers are usually not included in the region filters. This option lets them be included.
        -save primerTag   - Save the filtered/trimmed between-primer reads, and add this tag when building the file names. e.g. v4 --> S1_270_reads_anonymous_R?_16S_v4.fasta
        -primers          - Save the actual primer sequences found in the reads to XXXX_primers.txt.
+       -derep            - Dereplicate the extended reads (with size= annotations)
        -tmp/-kept        - Used to improve efficiency of processing unfiltered WGS datasets.
-       -log              - Debugging log from read extension phase.
+       -log              - Debugging log. Use -trn nnn to generate additional trace on a selected read. 
 ```
 For example: 
 
@@ -67,14 +65,21 @@ The type of executable produced by `dotnet publish` is controlled by the `Publis
 Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
 build Kelpie executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
 parts of the platform run-time are linked into the executables. Pre-built Kelpie code is provided for Windows and Linux, and 
-.NET SDKs are available that will allow Kelpie to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 (and 22 for v8) and tested on Ubuntu 22 and SUSE LES 15. 
+.NET SDKs are available from Microsoft that will allow Kelpie to be built for both x64 and ARM macOS systems. The Linux code has been built on both
+Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15. 
 
-The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
 framework-dependent x64 Linux Kelpie executable, and other versions can be build by changing the name of the profile file in the 
 publish command.
 
 ### Release notes
+
+### V2.3.4
+
+* Made the read extending/assembling phase multi-threaded and this is now much faster.
+* Multiple forward and reverse primers supported. e.g -f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA -r TACNGNTACCTTGTTACGACTT for extracting both archaeal and bacterial full-length 16S in a single run.
+* Improvements to accuracy for low coverage and noisy data. Better use of paired-reads and read coverage to avoid excessive tree exploration and reduce the risk of chimeras with noisy data.
+* Paired-read code now ignores trivial pairs, coming from short pairs (poor DNA prep). 
 
 ### V2.2.0
 

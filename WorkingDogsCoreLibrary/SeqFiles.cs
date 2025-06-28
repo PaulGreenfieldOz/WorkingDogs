@@ -13,7 +13,7 @@ namespace WorkingDogsCore
     {
         public const int formatNone = 0;            // no format specified (ask Readers to determine it if possible)
         public const int formatFASTA = 1;			// fasta with multiple data lines (.fna, .fa, .fasta, .fas, ...)
-        public const int formatFNA = 1;             // synonym (bacwards compatiblity with very old code)
+        public const int formatFNA = 1;             // synonym (backwards compatiblity with very old code)
         public const int formatSFA = 2;             // fasta with single data lines (assumed to fit inside a single buffer)
         public const int formatFASTQ = 3;           // fastq 
 
@@ -529,14 +529,15 @@ namespace WorkingDogsCore
         public static int TrimTrailingPoorQuals(Sequence read, Sequence quals, int trimQual, int qualOffset)
         {
             const int windowLength = 10;
-            const int passesNeededInWindow = windowLength * 3 / 4;
+            const int passesNeededInWindow = windowLength * 9 / 10;
             int basesTrimmed;
             char[] qualCharArray = quals.Bases;
             int goodBaseIdx = 0;
             int lastQualIdx = quals.Length - 1;
 
+            // find last good base
             for (int i = lastQualIdx; i >= 0; i--)
-                if (((int)qualCharArray[i] - qualOffset) > trimQual)
+                if (((int)qualCharArray[i] - qualOffset) >= trimQual)
                 {
                     goodBaseIdx = i;
                     break;
@@ -544,6 +545,7 @@ namespace WorkingDogsCore
 
             basesTrimmed = lastQualIdx - goodBaseIdx;
 
+            // scan back from here, counting number of good bases in a window
             for (int i = goodBaseIdx; i > windowLength; i--)
             {
                 int passedInWindow = 0;
@@ -581,7 +583,7 @@ namespace WorkingDogsCore
             //    qualScores[i] = (int)quals[i] - qualOffset;
 
             for (int i = quals.Length - 1; i >= 0; i--)
-                if (((int)quals[i] - qualOffset) > trimQual)
+                if (((int)quals[i] - qualOffset) >= trimQual)
                 {
                     goodBaseIdx = i;
                     break;
@@ -616,6 +618,17 @@ namespace WorkingDogsCore
 
             for (int i = 0; i < quals.Length; i++)
                 if ((int)quals[i] - qualOffset < minQual)
+                    poorQualCount++;
+
+            return poorQualCount;
+        }
+
+        public static int CountPoorQuals(Sequence quals, int minQual, int qualOffset)
+        {
+            int poorQualCount = 0;
+
+            for (int i = 0; i < quals.Length; i++)
+                if ((int)quals.Bases[i] - qualOffset < minQual)
                     poorQualCount++;
 
             return poorQualCount;

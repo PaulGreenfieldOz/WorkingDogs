@@ -20,20 +20,37 @@ namespace WorkingDogsCore
         {
             Length = 0;
             Capacity = capacity;
-            Bases = new char[capacity];
+            Bases = new char[Capacity];
         }
 
         public Sequence(string s)
         {
             Length = s.Length;
-            Capacity = s.Length;
-            Bases = s.ToCharArray();
+            Capacity = s.Length + 10;
+            Bases = new char[Capacity];
+            s.CopyTo(0, Bases, 0, s.Length);
+        }
+
+        public Sequence(string s, int capacity)
+        {
+            Length = s.Length;
+            Capacity = capacity;
+            Bases = new char[Capacity];
+            s.CopyTo(0, Bases, 0, s.Length);
         }
 
         public Sequence(Sequence s)
         {
             Length = s.Length;
             Capacity = s.Capacity;
+            Bases = new char[Capacity];
+            Array.Copy(s.Bases, 0, Bases, 0, this.Length);
+        }
+
+        public Sequence(Sequence s, int capacity)
+        {
+            Length = s.Length;
+            Capacity = capacity;
             Bases = new char[Capacity];
             Array.Copy(s.Bases, 0, Bases, 0, this.Length);
         }
@@ -93,7 +110,13 @@ namespace WorkingDogsCore
 
             return newSeq;
         }
+        public string SubString(int start, int length)
+        {
+            if (start + length > this.Length)
+                length = this.Length - start;
 
+            return new string(this.Bases, start, length);
+        }
         public void Reverse()
         {
             int halfWay = this.Length / 2;
@@ -142,7 +165,7 @@ namespace WorkingDogsCore
 
         public void Append(char b)
         {
-            if (Length == Capacity)
+            if (Capacity - Length < 10)
             {
                 Capacity += 50;
                 Array.Resize(ref Bases, Capacity);
@@ -150,6 +173,20 @@ namespace WorkingDogsCore
 
             Bases[Length] = b;
             Length++;
+        }
+        public void Append(string s)
+        {
+            if (Length == Capacity)
+            {
+                Capacity += 50 + s.Length;
+                Array.Resize(ref Bases, Capacity);
+            }
+
+            for (int b = 0; b < s.Length; b++)
+            {
+                Bases[Length] = s[b];
+                Length++;
+            }
         }
 
         public void CopyTo(Sequence copy)

@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyTitle>CondenseProkkaTbl</AssemblyTitle>
+    <Company>CSIRO</Company>
+    <Product>CondenseProkkaTbl</Product>
+    <Copyright>Copyright © CSIRO 2017</Copyright>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\WorkingDogsCoreLibrary\kMerCollections.cs" Link="kMerCollections.cs" />
+    <Compile Include="..\WorkingDogsCoreLibrary\kMers.cs" Link="kMers.cs" />
+    <Compile Include="..\WorkingDogsCoreLibrary\SeqFiles.cs" Link="SeqFiles.cs" />
+    <Compile Include="..\WorkingDogsCoreLibrary\Sequence.cs" Link="Sequence.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+    <PackageReference Include="System.Data.DataSetExtensions" Version="4.5.0" />
+  </ItemGroup>
+</Project>

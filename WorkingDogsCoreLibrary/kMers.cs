@@ -138,6 +138,27 @@ namespace WorkingDogsCore
             return true;
         }
 
+        public static bool CondenseMer(Span<char> seq, int start, int merSize, out ulong packedMer)
+        {
+            packedMer = 0;
+
+            for (int m = 0; m < merSize; m++)
+            {
+                char nextBase = seq[m + start];
+                long packedBase = BaseCharToInt(nextBase);
+
+                if (packedBase < 0)
+                {
+                    packedMer = 0;
+                    return false;
+                }
+
+                packedMer = (packedMer << 2) | (ulong)packedBase;
+            }
+            packedMer = packedMer << (64 - merSize * 2);
+            return true;
+        }
+
 
         public static bool CondenseMerIncremental(int merSize, ulong previousMer, string line, int m, out ulong nextMer)
         {
@@ -154,6 +175,19 @@ namespace WorkingDogsCore
 
         public static bool CondenseMerIncremental(int merSize, ulong previousMer, char nextBase, out ulong nextMer)
         {
+            long packedBase = BaseCharToInt(nextBase);
+            nextMer = (previousMer << 2) | (ulong)packedBase << (64 - merSize * 2);
+            if (packedBase < 0)
+            {
+                nextMer = 0;
+                return false;
+            }
+            return true;
+        }
+
+        public static bool CondenseMerIncremental(int merSize, ulong previousMer, Span<char> line, int m, out ulong nextMer)
+        {
+            char nextBase = line[m + merSize - 1];
             long packedBase = BaseCharToInt(nextBase);
             nextMer = (previousMer << 2) | (ulong)packedBase << (64 - merSize * 2);
             if (packedBase < 0)
@@ -414,6 +448,10 @@ namespace WorkingDogsCore
         {
             return ReverseComplement(s, new char[s.Length]);   
         }
+        public static string ReverseComplement(Span<char> s)
+        {
+            return ReverseComplement(s, new char[s.Length]);
+        }
 
         public static string ReverseComplement(string s, char[] rcs)
         {
@@ -424,21 +462,91 @@ namespace WorkingDogsCore
             for (int i = 0; i < sl; i++)
                 rcs[sl - i - 1] = baseToComplement[s[i] & 0x1f];
 
-            return new string(rcs);
+            return new string(rcs,0,sl);
+        }
+
+        public static string ReverseComplement(Span<char> s, char[] rcs)
+        {
+            int sl = s.Length;
+            if (rcs.Length < sl)
+                Array.Resize<char>(ref rcs, sl);
+
+            for (int i = 0; i < sl; i++)
+                rcs[sl - i - 1] = baseToComplement[s[i] & 0x1f];
+
+            return new string(rcs, 0, sl);
+        }
+
+        public static string ReverseComplement(ReadOnlySpan<char> s, char[] rcs)
+        {
+            int sl = s.Length;
+            if (rcs.Length < sl)
+                Array.Resize<char>(ref rcs, sl);
+
+            for (int i = 0; i < sl; i++)
+                rcs[sl - i - 1] = baseToComplement[s[i] & 0x1f];
+
+            return new string(rcs, 0, sl);
         }
 
         public static string ReverseComplement(string s, int startIdx, int length, char[] rcs)
         {
+            if (length+startIdx > s.Length)
+                length = s.Length - startIdx;            
             if (rcs.Length < length)
                 Array.Resize<char>(ref rcs, length);
 
-            for (int i = startIdx; i < startIdx+length; i++)
-                rcs[length - i - 1] = baseToComplement[s[i] & 0x1f];
+            for (int i = 0; i < length; i++) 
+                rcs[i] = baseToComplement[s[startIdx+length-i-1] & 0x1f];
 
-            return new string(rcs);
+            return new string(rcs,0,length);
+        }
+
+        public static string ReverseComplement(ReadOnlySpan<char> s, int startIdx, int length, char[] rcs)
+        {
+            if (length + startIdx > s.Length)
+                length = s.Length - startIdx;
+            if (rcs.Length < length)
+                Array.Resize<char>(ref rcs, length);
+
+            for (int i = 0; i < length; i++)
+                rcs[i] = baseToComplement[s[startIdx + length - i - 1] & 0x1f];
+
+            return new string(rcs, 0, length);
+        }
+
+        public static Span<char> ReverseComplementSpan(Span<char> s, int startIdx, int length, char[] rcs)
+        {
+            if (length + startIdx > s.Length)
+                length = s.Length - startIdx;
+            if (rcs.Length < length)
+                Array.Resize<char>(ref rcs, length);
+
+            for (int i = 0; i < length; i++)
+                rcs[i] = baseToComplement[s[startIdx + length - i - 1] & 0x1f];
+
+            return new Span<char>(rcs, 0, length);
+        }
+
+        public static ReadOnlySpan<char> ReverseComplementSpan(ReadOnlySpan<char> s, int startIdx, int length, char[] rcs)
+        {
+            if (length + startIdx > s.Length)
+                length = s.Length - startIdx;
+            if (rcs.Length < length)
+                Array.Resize<char>(ref rcs, length);
+
+            for (int i = 0; i < length; i++)
+                rcs[i] = baseToComplement[s[startIdx + length - i - 1] & 0x1f];
+
+            return new ReadOnlySpan<char>(rcs, 0, length);
         }
 
         public static string ReverseComplement(string s, int startIdx, int length)
+        {
+            return ReverseComplement(s, startIdx, length, new char[length]);
+        }
+
+        public static string ReverseComplement(ReadOnlySpan<char> s, int startIdx, int length)
         {
             return ReverseComplement(s, startIdx, length, new char[length]);
         }
@@ -593,13 +701,59 @@ namespace WorkingDogsCore
                 }
                 else
                 {
-                    merIsValid = CondenseMer(read.Substring(i, merSize), merSize, out lastMer);
+                    merIsValid = CondenseMer(read.Substring(i, merSize), 0, merSize, out lastMer);
                     merValid[i] = merIsValid;
                     merSet[i] = lastMer;
                 }
             }
 
             return mersInRead;
+        }
+
+        public static int GenerateMersFromRead(Span<char> read, int merSize, ref ulong[] merSet, ref bool[] merValid)
+        {
+            int readLength = read.Length;
+            int mersInRead = readLength - merSize + 1;
+            bool merIsValid = false;
+            ulong lastMer = 0;
+
+            if (mersInRead < 1)
+                return 0;
+
+            if (merSet.Length < mersInRead)
+            {
+                Array.Resize<ulong>(ref merSet, mersInRead + 100);
+                Array.Resize<bool>(ref merValid, mersInRead + 100);
+            }
+
+            for (int i = 0; i < mersInRead; i++)
+            {
+                if (merIsValid)
+                {
+                    merIsValid = CondenseMerIncremental(merSize, lastMer, read, i, out lastMer);
+                    merValid[i] = merIsValid;
+                    merSet[i] = lastMer;
+                }
+                else
+                {
+                    merIsValid = CondenseMer(read.Slice(i, merSize), 0, merSize, out lastMer);
+                    merValid[i] = merIsValid;
+                    merSet[i] = lastMer;
+                }
+            }
+
+            return mersInRead;
+        }
+
+        public static int GenerateMersFromRead(Sequence read, int merSize, ref ulong[] merSet, ref bool[] merValid)
+        {
+            return GenerateMersFromRead(new Span<char>(read.Bases, 0, read.Length), merSize, ref merSet, ref merValid);
+        }
+
+        public static int GenerateMersFromRead(Sequence read, char nextBase, int merSize, ref ulong[] merSet, ref bool[] merValid)
+        {
+            read.Bases[read.Length] = nextBase;
+            return GenerateMersFromRead(new Span<char>(read.Bases, 0, read.Length+1), merSize, ref merSet, ref merValid);
         }
 
         public static int GenerateExpandedMersFromRead(string read, int kMerSize, List<ulong> kMerSet, char[] degenerateBases, Dictionary<char, List<char>> degenerateBaseExpansions)

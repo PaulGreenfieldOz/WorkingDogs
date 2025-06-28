@@ -1,0 +1,13 @@
+#ubuntu 18
+./BuildCondenseProkkaTbl_Linux64DN6FD.sh
+./BuildCondenseProkkaTbl_Linux64DN7AOT.sh
+./BuildCondenseProkkaTbl_Linux64DN7FD.sh
+#ubuntu 22
+./BuildCondenseProkkaTbl_Linux64DN8AOT.sh
+./BuildCondenseProkkaTbl_Linux64DN8FD.sh
+#windows
+./BuildCondenseProkkaTbl_Win64DN6FD.ps1
+./BuildCondenseProkkaTbl_Win64DN7AOT.ps1
+./BuildCondenseProkkaTbl_Win64DN7FD.ps1
+./BuildCondenseProkkaTbl_Win64DN8AOT.ps1
+./BuildCondenseProkkaTbl_Win64DN8FD.ps1

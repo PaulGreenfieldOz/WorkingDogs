@@ -16,11 +16,11 @@ pre-filtering reads is still recommended where possible for performance reasons.
 very low abundance sequences have also been improved.
 
 FilterReads is a boringly-named kMer filter than can rapidly find reads of interest in very large datasets. Given a 16S filter, it produces results very similar to HMM-based
-tools, but runs at close to IO speed.
+tools, but runs at close to IO speed. Filters are built using BuildFilter. 
 
 Other kMer-based bioinformatics tool will join the pack from time to time. The GHAP amplicon pipeline will appear soon, and Pup will make its appearance soon too.
 
-All code is now being compiled with .NET, producing both framework-dependent and pre-packed (AOT) code files. .NET 6, 7 & 8 are all supported. The framework-dependend
+All code is now being compiled with .NET, producing both framework-dependent and pre-packed (AOT) code files. .NET 8 (LTS) is supported, as .NET 10 will be when it is finished. The framework-dependend
 code files need to have the corresponding .NET run-time installed, while the AOT code has any necessary run-time code bundled into
-the code file. The usual Linux glibc dependency issues has led to both Ubuntu 18 and Ubuntu 22 being used for compilations. If none of the pre-compiled Linux code files work on your system, you can 
-install the latest supported .NET SDK and build your own bespoke code files. Later .NET releases support MacOS, both x64 and ARM) but you will have to compile this yourself.
+the code file. The usual Linux glibc dependency issues has led to both Ubuntu 20 and Ubuntu 24 being used for Linux compilations. If none of the pre-compiled Linux code files work on your system, you can 
+install the latest supported .NET SDK and build your own bespoke code files. Later .NET releases support MacOS, both x64 and ARM) but you will have to compile this code yourself.

@@ -1,0 +1,14 @@
+A:\GitHub\WorkingDogs\Blue\Win64DN8AOT\Blue.exe
+A:\GitHub\WorkingDogs\Blue\Win64DN8FD\Blue.exe
+A:\GitHub\WorkingDogs\BuildFilter\Win64DN8AOT\BuildFilter.exe
+A:\GitHub\WorkingDogs\BuildFilter\Win64DN8FD\BuildFilter.exe
+A:\GitHub\WorkingDogs\CondenseProkkaTbl\Win64DN8AOT\CondenseProkkaTbl.exe
+A:\GitHub\WorkingDogs\CondenseProkkaTbl\Win64DN8FD\CondenseProkkaTbl.exe
+A:\GitHub\WorkingDogs\ExtractHeadersFromFasta\Win64DN8AOT\ExtractHeadersFromFasta.exe
+A:\GitHub\WorkingDogs\ExtractHeadersFromFasta\Win64DN8FD\ExtractHeadersFromFasta.exe
+A:\GitHub\WorkingDogs\FilterReads\Win64DN8AOT\FilterReads.exe
+A:\GitHub\WorkingDogs\FilterReads\Win64DN8FD\FilterReads.exe
+A:\GitHub\WorkingDogs\Kelpie_v2\Win64DN8AOT\Kelpie_v2.exe
+A:\GitHub\WorkingDogs\Kelpie_v2\Win64DN8FD\Kelpie_v2.exe
+A:\GitHub\WorkingDogs\Tessel\Win64DN8AOT\Tessel.exe
+A:\GitHub\WorkingDogs\Tessel\Win64DN8FD\Tessel.exe

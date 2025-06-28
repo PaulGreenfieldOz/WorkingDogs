@@ -1,13 +1,9 @@
-#ubuntu 18
-./BuildTessel_Linux64DN6FD.sh
-./BuildTessel_Linux64DN7AOT.sh
-./BuildTessel_Linux64DN7FD.sh
-#ubuntu 22
-./BuildTessel_Linux64DN8AOT.sh
-./BuildTessel_Linux64DN8FD.sh
+#ubuntu 20
+./BuildTessel_Linux64DN8AOTU20.sh
+./BuildTessel_Linux64DN8FDU20.sh
+#ubuntu 24
+./BuildTessel_Linux64DN8AOTU24.sh
+./BuildTessel_Linux64DN8FDU24.sh
 #windows
-./BuildTessel_Win64DN6FD.ps1
-./BuildTessel_Win64DN7AOT.ps1
-./BuildTessel_Win64DN7FD.ps1
 ./BuildTessel_Win64DN8AOT.ps1
 ./BuildTessel_Win64DN8FD.ps1

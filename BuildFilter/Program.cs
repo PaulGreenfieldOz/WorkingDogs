@@ -340,7 +340,7 @@ namespace BuildFilter
 
             foreach (KeyValuePair<ulong, int> kvp in distinctMers)
             {
-                ulong mer = kvp.Key;
+                ulong kMer = kvp.Key;
                 int count = kvp.Value;
 
                 //string kMer = kMers.ExpandMer(mer, merSize);
@@ -351,7 +351,7 @@ namespace BuildFilter
                 if (filterLowComplexity)
                 {
                     // just don't write out low complexity mers... 
-                    if (LowComplexityMer(kMerSize, mer, distinctBits, baseCounts))
+                    if (LowComplexityMer(kMerSize, kMer, distinctBits, baseCounts))
                     {
                         skippedLC++;
                         //trace.WriteLine("- " + kMers.ExpandMer(mer, merSize));
@@ -365,10 +365,11 @@ namespace BuildFilter
                     continue;
                 }
 
-                tiledSeqs.Write(mer);                        // ulong - packed mer - max 32 bases
+                tiledSeqs.Write(kMer);                        // ulong - packed mer - max 32 bases
                 mersWritten++;
                 //trace.WriteLine("+ " + kMers.ExpandMer(mer, merSize));
             }
+
 
             tiledSeqs.Close();
             //trace.Close();
@@ -403,8 +404,6 @@ namespace BuildFilter
             if (CheckForDiversity(kMerSize, kMer, distinctBits, 2))
                 return true;
             if (CheckForDiversity(kMerSize, kMer, distinctBits, 3))
-                return true;
-            if (CheckForDiversity(kMerSize, kMer, distinctBits, 4))
                 return true;
 
             return false;
@@ -480,10 +479,10 @@ namespace BuildFilter
             }
 
             int topCount = sumAtMax;
-            if (secondCount > 3)
+            if (secondCount > ptqInMer / 4)
                 topCount += sumAtSecond;
-            int cutOff = ptqInMer * 50 / 100;
-            if (secondCount > 3 && topCount < cutOff)
+            int cutOff = ptqInMer * 66 / 100;
+            if (secondCount > ptqInMer / 4 && topCount < cutOff)
             {
                 // collect any really close to second (end of seq effects)
                 foreach (int count in distinctSet.Values)
@@ -494,9 +493,11 @@ namespace BuildFilter
                 topCount += sumAtSecond;
                 cutOff = ptqInMer * 80 / 100;
             }
-            if (topCount >= cutOff && maxCount > 3)
+            if (topCount >= cutOff && maxCount > ptqInMer / 3)
                 lacksDiversity = true;
 
+            //if (lacksDiversity)
+            //    Console.WriteLine(ptqSize + ": " + kMers.ExpandMer(kMer, kMerSize));
             //if (trace && lacksDiversity)
             //{
             //    Console.WriteLine(kMers.ExpandMer(mer, merSize));

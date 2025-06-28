@@ -1080,9 +1080,8 @@ namespace Tessel
                 qualBatch[i] = new Sequence(defaultReadLength);             
             }
 
-            //ulong testMer;
-            //MerStrings.CondenseMer("CCTAAAAAAAAAAAAAAAAAAAAAA", out testMer);
-            //ulong testMerRC = MerStrings.ReverseComplement(testMer);
+            //ulong testMer = kMers.CondenseMer("AAAAAATCATTTATTGTTATAACAT");
+            //ulong testMerRC = kMers.ReverseComplement(testMer, merSize);
 
             bool EOF = false;
             int readsInBatch = 0;
@@ -1111,6 +1110,8 @@ namespace Tessel
                         break;
                     }
 
+                    //if (readBatch[r].ToString() == "AAAAAATCATTTATTGTTATAACATTGTGTTCCCCCGACAGCGTTTTTACTACCTTTTTGAAGTTTCTCGCTCTGTTTTTTCTGAAGGGAGGACCGCCACG")
+                    //    Debugger.Break();
                     int readLength = readBatch[r].Length;
                     if (readLength < merSize)
                         continue;
@@ -1129,6 +1130,8 @@ namespace Tessel
                        
                         if (merValid[i])
                         {
+                            //if (merSet[i] == testMer)
+                            //    Debugger.Break();
                             merTables.AddOrIncrement(merSet[i], merSize, threadNo);
                             threadStats.noOfValidMers++;
                         }
@@ -1201,7 +1204,7 @@ namespace Tessel
                         continue;
                     }
 
-                    //string target = "CTGGAAGTTGCCAGCTGGCTGGAAGATGTAGATGGCAAACAGGAAACGCGTTATGCCTTTATTGATGAGGCCGATAATAAAACAGAGGATTCTCTGAAGGCTGCGAAGGAGAAAATTTTCGCCGCGTTCCCGGGGCTGAAAGAGTGTACT";
+                    //string target = "AAAAAATCATTTATTGTTATAACATTGTGTTCCCCCGACAGCGTTTTTACTACCTTTTTGAAGTTTCTCGCTCTGTTTTTTCTGAAGGGAGGACCGCCACG";
                     //if (read.ToString() == target)
                     //    Debugger.Break();
 

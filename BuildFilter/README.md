@@ -30,7 +30,7 @@ The full set of BuildFilter parameters is:
 - -k *kMer_length*  
 Length of kMers in the filter. This would normally be at least 20 to take advantage of the distinctiveness of such kMers. kMers cannot be longer than 32 bases.
 [-v1|-v1c|-v2c|-v2a]
-optional file format and kMer type. Default is -v2c,
+optional file format and kMer type. Default is -v2c. Only provided for backwards compatibility.
 - +lcf   
 Turns on low-complexity filtering of the kMers/reads. This is the default.
 - -lcf   
@@ -63,9 +63,9 @@ Properties/PublishProfiles directory, for both framework-dependent and AOT compi
 build BuildFilter executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
 parts of the platform run-time are linked into the executables. Pre-built BuildFilter code is provided for Windows and Linux, and 
 .NET SDKs are available that will allow BuildFilter to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
+Ubuntu 20 (for glibc 2.31) and Ubuntu 24 (for glibc 2.39). and tested on Ubuntu 24 and SUSE LES 15.5. 
 
-The command `dotnet publish ./BuildFilter.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+The command `dotnet publish ./BuildFilter.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
 framework-dependent x64 Linux BuildFilter executable, and other versions can be built by changing the name of the profile file in the 
 publish command.
 

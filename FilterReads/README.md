@@ -8,7 +8,9 @@ The kMer filters are simply sets of kMers tiled from a set of reference sequence
 Any number of filters can be specified in a single run, and they can be inclusive or exclusive. Reads that pass through FilterReads must have enough kMer matches onto any one 
 of the specified inclusive filters, and not have too many matches on any of the exclusive filters. Matches can be either exact (+f or -f)
 or single-base mismatches can be allowed (+fz or -fz). Generating single-base variants of large filters is very memory-hungry, so in this case small 'seed' matches are used first, and full variant generation is only done if the first 
-'seed' part of the kMer get an exact match. This behaviour can be controlled with the -seedlength (-sl) option. Small kMer filters are always fully turned into sets of variant kMers, and this behaviour can be forced for larger sets by setting '-seedlength' to zero. Seeded fuzzy matching is slower than exact matching as the kmer variants are generated on the fly (and cached).
+'seed' part of the kMer get an exact match. This behaviour can be controlled with the -seedlength (-sl) option. 
+Small kMer filters are always fully turned into sets of variant kMers, and this behaviour can be forced for larger sets by setting '-seedlength' to zero. 
+Seeded fuzzy matching is slower than exact matching as the kmer variants are generated on the fly (and cached).
 
 Example 1 below was written to filter bacterial 16S sequences from mixed human gut wall samples. 
 These samples were a mixture of human and microbial RNA/DNA and the filter pulled out the bacterial 16S while discarding the very similar human 18S and mitochondrial 16S sequences. 
@@ -82,8 +84,8 @@ Properties/PublishProfiles directory, for both framework-dependent and AOT compi
 build FilterReads executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
 parts of the platform run-time are linked into the executables. Pre-built FilterReads code is provided for Windows and Linux, and 
 .NET SDKs are available that will allow FilterReads to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
+Ubuntu 20 (for glibc 2.31) and on Ubuntu 24 (glibc 2.39), and tested on Ubuntu 24 and SUSE LES 15.5. 
 
-The command `dotnet publish ./FilterReads.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+The command `dotnet publish ./FilterReads.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
 framework-dependent x64 Linux FilterReads executable, and other versions can be built by changing the name of the profile file in the 
 publish command.

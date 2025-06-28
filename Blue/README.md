@@ -49,23 +49,22 @@ The full set of Blue parameters is:
 Blue is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
 files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. The Linux .NET 6 & 7 code files
-have been compiled on Ubuntu 18, and the .NET 8 code under Ubuntu 22. If you have glibc version issues, try one of the other versions.
+for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. If you have glibc version issues, try one of the other Linux versions or build your own code.
 
 You can compile Blue yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
 The Blue code itself is in Program.cs in this directory, and you'll also need to download the files
 in WorkingDocsCoreLibrary. Blue can be built as 'frame-work dependent' code or as 
 standalone code (AOT) with necessary run-time code linked into the Blue executable. The AOT code will run on systems that do not have the 
-.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
+.NET run-time installed. AOT code generation is only supported from .NET 7 onwards.
 
 The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
 Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
 build Blue executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
 parts of the platform run-time are linked into the executables. Pre-built Blue code is provided for Windows and Linux, and 
 .NET SDKs are available that will allow Blue to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
+Ubuntu 20 (for glibc 2.31) and Ubuntu 24 (glibc 2.39), and tested on Ubuntu 24 and SUSE LES 15.5. 
 
-The command `dotnet publish ./Blue.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
+The command `dotnet publish ./Blue.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
 framework-dependent x64 Linux Blue executable, and other versions can be built by changing the name of the profile file in the 
 publish command.
 

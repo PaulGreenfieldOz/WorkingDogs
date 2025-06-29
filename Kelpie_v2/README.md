@@ -1,7 +1,11 @@
 # Kelpie V2.3 
 
-Kelpie V2.3 (2.3.4) is now available. V2.3 makes better use of paired-reads to decide between plausible paths; multi-threads the final (extension) phase for better performance; 
-supports multiple forward or reverse primers (e.g.-f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA); and the extended sequences can be written out dereplicated (with size= annotations). 
+Kelpie V2.3 (2.3.4) is now available. 
+
+* Better use of paired-reads to decide between plausible paths; 
+* Multi-threads the final (extension) phase for better performance; 
+* Supports multiple forward or reverse primers (e.g.-f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA); 
+* Extended sequences can be written out dereplicated (with size= annotations). 
 
 # Kelpie usage
 
@@ -39,9 +43,9 @@ For example:
 
 `Kelpie_v -f GTGYCAGCMGCCGCGGTAA -r GGACTACNVGGGTWTCTAAT CAMI_medium\S1-2_270_reads_anonymous_R?.fq CAMI_medium_16S_Kv2UF.fa -unfiltered -loose -mm 2 -tmp c:\SeqTemp\K2` 
 
-`Kelpie_v2 -f GTGYCAGCMGCCGCGGTAA -r GGACTACNVGGGTWTCTAAT C:\SeqTemp\KelpieTests\Cel119_?.fastq Cel119_16S_v4_v210_US.fa -unfiltered -qt 0 -strict -tmp c:\SeqTemp\K2`
+`Kelpie_v2 -f GTGYCAGCMGCCGCGGTAA -r GGACTACNVGGGTWTCTAAT C:\SeqTemp\KelpieTests\Cel119_?.fastq Cel119_16S_v4_v234_US.fa -unfiltered -qt 0 -strict -tmp c:\SeqTemp\K2`
 
-`Kelpie_v2 -f GTGYCAGCMGCCGCGGTAA -r GGACTACNVGGGTWTCTAAT Cel119_?_16S_20_fz_25_qt.fa Cel119_16S_v4_v210_FS.fa -filtered -strict` 
+`Kelpie_v2 -f GTGYCAGCMGCCGCGGTAA -r GGACTACNVGGGTWTCTAAT Cel119_?_16S_20_fz_25_qt.fa Cel119_16S_v4_v2234_FS.fa -filtered -strict` 
 
 `Kelpie_v2 -f TCNACNAAYCAYAARRAYATYGG -r TANACYTCNGGRTGNCCRAARAAYCA PlatesGH_2003\Sample_PRO1747_PlateG_*_R?_val_?_COI.fa PlatesGH_2003_FolmD_FF_strict.fa -filtered -strict`
 
@@ -72,13 +76,30 @@ The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linu
 framework-dependent x64 Linux Kelpie executable, and other versions can be build by changing the name of the profile file in the 
 publish command.
 
+### Advice on primers and filtering
+The in-silico primer sequences used by Kelpie work in much the same way as their molecular equivalents. Primers can match into the expected conserved region, and they can 
+match elsewhere as well. In a real PCR, the first run with the forward primer can result in off-target matches, but the following reverse primer run will select only those 
+sequences that also contain the reverse primer. Kelpie does something similar, it first finds reads containing forward or reverse primers, and then finds reads that overlap these 
+primer-containing reads. Because Kelpie can only work with the (short) reads it is given, not full-length amplicons, it can't discard off-target reads as easily, as it doesn't know anything 
+about the target region. These off-target reads can result in large numbers of reads being kept during the filtering stage. These off-target reads result in larger kMer 
+tables, but are otherwise innocuous. Off-target reads are worth controlling though, as they can degrade performance as they still have to be tiled and de-noised.
+
+Kelpie simulates primer mismatches when finding primer-containing reads, and the number of mismatches allowed is set by the -mismatches (-mm) option. The default is 1 mismatch. 
+The right number of mismatches is a balance between off-target matches and primer effectiveness. The -primers option will show what primers sequences were actually found in the WGS reads. 
+I often do an initial run with a higher -mm value (2 or 3), and then adjust the primer sequences to better match what's in the data, and then reduce the -mm value to reduce off-target matches. 
+
+The fastest way of running Kelpie is with pre-filtered reads. I use BuildFilter with a curated representative reference set (e.g. RefSeq 16S) and then run FilterReads to extract only 
+those WGS reads that appear to be coming from my target region. If you are using FilterReads, you should use the -eitherinpair or -bothinpair options to keep the pairedness of the filtered reads,
+now that Kelpie can use paired-reads to resolve alternative paths in the kMer tree. 
+
 ### Release notes
 
 ### V2.3.4
 
 * Made the read extending/assembling phase multi-threaded and this is now much faster.
 * Multiple forward and reverse primers supported. e.g -f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA -r TACNGNTACCTTGTTACGACTT for extracting both archaeal and bacterial full-length 16S in a single run.
-* Improvements to accuracy for low coverage and noisy data. Better use of paired-reads and read coverage to avoid excessive tree exploration and reduce the risk of chimeras with noisy data.
+* Improvements to accuracy for low coverage and noisy data. 
+* Better use of paired-reads and read coverage to avoid excessive tree exploration and reduce the risk of chimeras with noisy data.
 * Paired-read code now ignores trivial pairs, coming from short pairs (poor DNA prep). 
 
 ### V2.2.0
@@ -164,7 +185,7 @@ kMer contexts and deferred culling to better preserve low-abundance kMers that f
 been extensively tested using the dataset mentioned in the Kelpie paper, and with COI data using a number of primers. 
 Kelpie V2 has also been used to extract full-length 16S sequences from both cultures and metagenomic samples.
 
-## Kelpie v1
+## Kelpie v1 (deprecated)
 
 Kelpie extracts/assembles full-length inter-primer sequences from WGS metagenomic datasets. 
 You could think of it as something akin to in-silico PCR, taking a pair of primer sequences 

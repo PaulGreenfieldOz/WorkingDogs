@@ -3558,13 +3558,16 @@ namespace Kelpie
         }
 
         // generate a kMer context of the specified length
-        private static bool GenerateWantedContext(ulong[] kMersInRead, int kMerCount, int kMerSize, int kMerIdx, int wantedLength, out ulong context)
+        private static bool GenerateWantedContext(ulong[] kMersInRead, bool[] kMersValid, int kMerCount, int kMerSize, int kMerIdx, int wantedLength, out ulong context)
         {
             context = 0;
 
             int finalIdx = kMerIdx + wantedLength - kMerSize;
             if (finalIdx >= kMerCount)
                 return false;
+            for (int m = kMerIdx; m > finalIdx; m++)
+                if (!kMersValid[m])
+                    return false;
             context = kMersInRead[kMerIdx] ^ kMersInRead[finalIdx];
             for (int m = kMerIdx + kMerSize; m < finalIdx; m += kMerSize)   // add any in-between kMers to the hash
                 context ^= kMersInRead[m];
@@ -3881,7 +3884,7 @@ namespace Kelpie
                         bool foundInFirstThird = false;
                         for (int i = 0; i < firstThirdEndIdx; i++)
                         {
-                            if (regionFilter.Contains(kMersInRead[i]))
+                            if (kMersValid[i] && regionFilter.Contains(kMersInRead[i]))
                             {
                                 foundInFirstThird = true;
                                 break;
@@ -3891,7 +3894,7 @@ namespace Kelpie
                         bool foundInSecondThird = false;
                         for (int i = firstThirdEndIdx; i < secondThirdEndIdx; i++)
                         {
-                            if (regionFilter.Contains(kMersInRead[i]))
+                            if (kMersValid[i] && regionFilter.Contains(kMersInRead[i]))
                             {
                                 //if (header.StartsWith("@RM2|S1|R13243951/1"))
                                 //    Debugger.Break();
@@ -3903,7 +3906,7 @@ namespace Kelpie
                         bool foundInThirdThird = false;
                         for (int i = secondThirdEndIdx; i < thirdThirdEndIdx; i++)
                         {
-                            if (regionFilter.Contains(kMersInRead[i]))
+                            if (kMersValid[i] && regionFilter.Contains(kMersInRead[i]))
                             {
                                 //if (header.StartsWith("@RM2|S1|R13243951/1"))
                                 //    Debugger.Break();
@@ -4040,14 +4043,18 @@ namespace Kelpie
 
                     // look for a match at the start of a read (F-->)
                     ulong startingMer;
-                    kMers.CondenseMer(read, 0, kMerSize, out startingMer);
+                    bool kMerOK = kMers.CondenseMer(read, 0, kMerSize, out startingMer);
+                    if (!kMerOK)
+                        continue;
                     // or at the end of an reverse direction read (-->F') if this fails
                     bool matchAtStart = regionFilter[fwd].Contains(startingMer) || regionFilter[rvs].Contains(startingMer);
                     bool matchAtEnd = false;
                     if (!matchAtStart)
                     {
                         ulong endingMerRC;
-                        kMers.CondenseMer(read, (read.Length - kMerSize), kMerSize, out endingMerRC);
+                        kMerOK = kMers.CondenseMer(read, (read.Length - kMerSize), kMerSize, out endingMerRC);
+                        if (!kMerOK)
+                            continue;
                         endingMerRC = kMers.ReverseComplement(endingMerRC, kMerSize);
 
                         matchAtEnd = regionFilter[fwd].Contains(endingMerRC) || regionFilter[rvs].Contains(endingMerRC);
@@ -4079,7 +4086,7 @@ namespace Kelpie
                             if (contextExists[d][li].Contains(startingMer))
                             {
                                 ulong kMerContext;
-                                bool contextPossible = GenerateWantedContext(kMersFromRead, kMerCount, kMerSize, 0, contextLengths[li], out kMerContext);
+                                bool contextPossible = GenerateWantedContext(kMersFromRead, kMersValid, kMerCount, kMerSize, 0, contextLengths[li], out kMerContext);
                                 if (contextPossible && kMerContexts[d][li].Contains(kMerContext))
                                 {
                                     readMatches = true;
@@ -4186,14 +4193,17 @@ namespace Kelpie
 
                     // look for a match at the start of a read (F-->)
                     ulong startingMer;
-                    kMers.CondenseMer(read, 0, kMerSize, out startingMer);
-                    // or at the end of an reverse direction read (-->F') if this fails
+                    bool kMerOK = kMers.CondenseMer(read, 0, kMerSize, out startingMer);
+                    if (!kMerOK)
+                        continue;                    // or at the end of an reverse direction read (-->F') if this fails
                     bool matchAtStart = regionFilter[fwd].Contains(startingMer) || regionFilter[rvs].Contains(startingMer);
                     bool matchAtEnd = false;
                     if (!matchAtStart)
                     {
                         ulong endingMerRC;
-                        kMers.CondenseMer(read, (read.Length - kMerSize), kMerSize, out endingMerRC);
+                        kMerOK = kMers.CondenseMer(read, (read.Length - kMerSize), kMerSize, out endingMerRC);
+                        if (!kMerOK)
+                            continue;
                         endingMerRC = kMers.ReverseComplement(endingMerRC, kMerSize);
 
                         matchAtEnd = regionFilter[fwd].Contains(endingMerRC) || regionFilter[rvs].Contains(endingMerRC);
@@ -4226,7 +4236,7 @@ namespace Kelpie
                             if (contextExists[d][li].Contains(startingMer))
                             {
                                 ulong kMerContext;
-                                bool contextPossible = GenerateWantedContext(kMersFromRead, kMerCount, kMerSize, 0, contextLengths[li], out kMerContext);
+                                bool contextPossible = GenerateWantedContext(kMersFromRead, kMersValid, kMerCount, kMerSize, 0, contextLengths[li], out kMerContext);
 
                                 if (contextPossible && kMerContexts[d][li].Contains(kMerContext))
                                 {
@@ -8678,13 +8688,13 @@ namespace Kelpie
         private static bool CheckExtensionViability(string seq, Dictionary<ulong, int> kMerTable, int kMerSize, int wantedReadLength, int minDepthAllowed)
         {
             ulong kMer;
-            kMers.CondenseMer(seq, seq.Length - kMerSize, kMerSize, out kMer);
+            bool kMerValid = kMers.CondenseMer(seq, seq.Length - kMerSize, kMerSize, out kMer);
             bool targetGroup = false;
-            if (targetGroup)
-                Console.WriteLine(seq);
-            bool viable = ExploreExtensionTree(kMer, kMerTable, kMerSize, wantedReadLength, minDepthAllowed, seq.Length, 0, 0, targetGroup);
-            if (!viable && targetGroup)
-                Console.WriteLine(seq);
+            //if (targetGroup)
+            //    Console.WriteLine(seq);
+            bool viable = kMerValid && ExploreExtensionTree(kMer, kMerTable, kMerSize, wantedReadLength, minDepthAllowed, seq.Length, 0, 0, targetGroup);
+            //if (!viable && targetGroup)
+            //    Console.WriteLine(seq);
             return viable;
         }
 

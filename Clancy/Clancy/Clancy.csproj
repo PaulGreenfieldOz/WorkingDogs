@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>disable</Nullable>
+	<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\kMers.cs">
+      <Link>kMers.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\SeqFiles.cs">
+      <Link>SeqFiles.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\Sequence.cs"> 
+      <Link>Sequence.cs</Link>
+	</Compile>
+	<Compile Include="..\..\WorkingDogsCoreLibrary\kMerCollections.cs"> 
+      <Link>"kMerCollections.cs"</Link>
+    </Compile>
+  </ItemGroup>
+</Project>

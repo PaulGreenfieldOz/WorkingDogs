@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DefineConstants>
+    </DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\kMerCollections.cs">
+      <Link>kMerCollections.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\kMerPairs.cs">
+      <Link>kMerPairs.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\kMers.cs">
+      <Link>kMers.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\kMerTables.cs">
+      <Link>kMerTables.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\SeqFiles.cs">
+      <Link>SeqFiles.cs</Link>
+    </Compile>
+    <Compile Include="..\..\WorkingDogsCoreLibrary\Sequence.cs">
+      <Link>Sequence.cs</Link>
+    </Compile>
+  </ItemGroup>
+</Project>

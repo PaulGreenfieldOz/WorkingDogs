@@ -389,19 +389,10 @@ namespace WorkingDogsCore
             if (partitioned)
             {
                 for (int i = 0; i < noOfPartitions; i++)
-                {
-                    if ((float)hashSetPartitions[i].Count / (float)hashSetPartitions[i].Capacity < 0.8)
-                    {
-                        hashSetPartitions[i].Optimise();
-                        GC.Collect(2);
-                    }
-                }
+                    hashSetPartitions[i].Optimise();
             }
             else
-            {
                 hashSet.Optimise();
-                GC.Collect(2);
-            }
         }
 
         public void Clear()
@@ -623,6 +614,7 @@ namespace WorkingDogsCore
                 pmp.AddNoCheck(orderedMers[i], orderedValues[i]);
             }
             pmp.Optimise();
+            GC.Collect(2);
             //Console.WriteLine(merCount + " mers copied for partition " + partitionNo);
         }
 

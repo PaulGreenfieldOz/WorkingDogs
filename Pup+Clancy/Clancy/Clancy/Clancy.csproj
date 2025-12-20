@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'" />
+
+  <ItemGroup>
+    <Compile Include="..\..\..\WorkingDogsCoreLibrary\kMerCollections.cs" Link="kMerCollections.cs" />
+    <Compile Include="..\..\..\WorkingDogsCoreLibrary\kMers.cs" Link="kMers.cs" />
+    <Compile Include="..\..\..\WorkingDogsCoreLibrary\SeqFiles.cs" Link="SeqFiles.cs" />
+    <Compile Include="..\..\..\WorkingDogsCoreLibrary\Sequence.cs" Link="Sequence.cs" />
+    <Compile Include="..\..\PupClancyMatching.cs" Link="PupClancyMatching.cs" />
+  </ItemGroup>
+
+</Project>

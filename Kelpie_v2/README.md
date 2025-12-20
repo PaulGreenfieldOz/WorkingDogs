@@ -55,29 +55,55 @@ For example:
 
 Kelpie is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
-files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Kelpie is ‘installed’ simply by copying its code file to an appropriate directory on your system. The Linux .NET 8 compilations were done using Ubuntu 22. The .NET 6 and 7 compilations
-were done using Ubuntu 18 to target an older glibc version. 
+files are also provided, but these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. The Linux code has been built on both
+Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15.
 
-You can compile Kelpie yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
-The Kelpie code itself is in Program.cs in this directory, and you'll also need to download 
-kMers.cs, SeqFiles.cs and Sequence.cs in WorkingDocsCoreLibrary. Kelpie can be built as 'frame-work dependent' code or as 
-standalone code (AOT) with necessary run-time code linked into the Kelpie executable. The AOT code will run on systems that do not have the 
-.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
+Kelpie is ‘installed’ simply by copying the desired code file to an appropriate directory on your system. For example, if you want to 
+run the self-contained .Net8 Kelpie code file on a Linux system compatible with Ubuntu 24 (glibc 2.39), you should copy the 
+Kelpie file from the Linux64DN8FDU24 directory.You may have to set permission bits on the Kelpie code file before you can execute it on Linix. 
 
-The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
-Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
-build Kelpie executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
-parts of the platform run-time are linked into the executables. Pre-built Kelpie code is provided for Windows and Linux, and 
-.NET SDKs are available from Microsoft that will allow Kelpie to be built for both x64 and ARM macOS systems. The Linux code has been built on both
-Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15. 
+Compilation scripts are provided for both Windows (.ps1) and Linux (.sh). For example, `BuildKelpie_Linux64DN8AOTU24.sh` 
+will build a stand-alone Kelpie executable targeting .NET8. This script was run on Ubuntu 24 to build the executable, and the resulting Kelpie code will be 
+expecting glibc 2.39 or above to be available when it is run. 
 
-The command `dotnet publish ./Kelpie_v2.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
-framework-dependent x64 Linux Kelpie executable, and other versions can be build by changing the name of the profile file in the 
+You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk) and these scripts assume the directory structure
+found in the GitHub repository, as shown below. 
+The Kelpie code itself is in Kelpie.cs in the Kelpie directory, and you'll also need to download 
+kMers.cs, SeqFiles.cs and Sequence.cs to the WorkingDocsCoreLibrary. The Kelpie compilation scripts are intended to be run from the 
+WorkingDogs/Kelpie directory.
+
+```
+WorkingDogs
+	Kelpie
+		Kelpie.sln
+		Kelpie
+			Kelpie.cs
+			Kelpie.csproj
+			Properties
+				PublishProfiles
+					<XXX>.pubxml
+	WorkingDogsCoreLibrary
+		kMers.cs
+		Sequence.cs
+		SeqFiles.cs
+```
+
+The type of executable produced is controlled by the PublishProfile (.pubxml) parameter supplied to `dotnet publish`. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. 
+AOT builds for Linux have to be done on a system that is 
+compatible with the intended execution platform as 
+the required glibc level is embedded into the executable code.
+
+You can build Kelpie for other target systems, such as MacOS on Arm, by creating a 
+.pubxml file with the appropriate RuntimeIdentifier - see https://learn.microsoft.com/en-us/dotnet/core/rid-catalog. 
+The command `dotnet publish ./Kelpie_v2.sln -c release /p:PublishProfile=Linux64DN10AOTFolderProfile.pubxml` 
+in the `BuildKelpie_Linux64DN8AOTU24.sh` script is what builds the
+framework-dependent x64 Linux Kelpie executable, and other versions can be built by changing the name of the profile file in this 
 publish command.
 
 ### Advice on primers and filtering
-The in-silico primer sequences used by Kelpie work in much the same way as their molecular equivalents. Primers can match into the expected conserved region, and they can 
+The in-silico primer sequences used by Kelpie work in much the same way as their in-vitro equivalents. Primers can match into the expected conserved region, and they can 
 match elsewhere as well. In a real PCR, the first run with the forward primer can result in off-target matches, but the following reverse primer run will select only those 
 sequences that also contain the reverse primer. Kelpie does something similar, it first finds reads containing forward or reverse primers, and then finds reads that overlap these 
 primer-containing reads. Because Kelpie can only work with the (short) reads it is given, not full-length amplicons, it can't discard off-target reads as easily, as it doesn't know anything 
@@ -100,7 +126,7 @@ now that Kelpie can use paired-reads to resolve alternative paths in the kMer tr
 * Multiple forward and reverse primers supported. e.g -f AGAGTTTGATCMTGGCTCAG,TTCYGKTTGATCCYGSCRGA -r TACNGNTACCTTGTTACGACTT for extracting both archaeal and bacterial full-length 16S in a single run.
 * Improvements to accuracy for low coverage and noisy data. 
 * Better use of paired-reads and read coverage to avoid excessive tree exploration and reduce the risk of chimeras with noisy data.
-* Paired-read code now ignores trivial pairs, coming from short pairs (poor DNA prep). 
+* Paired-read code now ignores any trivial pairs that arise from short amplicons (poor DNA prep). 
 
 ### V2.2.0
 

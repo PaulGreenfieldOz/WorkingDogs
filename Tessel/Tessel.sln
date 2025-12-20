@@ -1,0 +1,33 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.26403.7
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tessel", "Tessel\Tessel.csproj", "{5BEB60AA-83C9-43C4-A5A1-C07E508589A8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{F97A9357-64AE-453D-9D5C-DFF979BB2938}"
+	ProjectSection(SolutionItems) = preProject
+		Tessel\MerTables.cs = Tessel\MerTables.cs
+		Performance1.psess = Performance1.psess
+		Performance2.psess = Performance2.psess
+		Performance3.psess = Performance3.psess
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5BEB60AA-83C9-43C4-A5A1-C07E508589A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5BEB60AA-83C9-43C4-A5A1-C07E508589A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5BEB60AA-83C9-43C4-A5A1-C07E508589A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5BEB60AA-83C9-43C4-A5A1-C07E508589A8}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(Performance) = preSolution
+		HasPerformanceSessions = true
+	EndGlobalSection
+EndGlobal

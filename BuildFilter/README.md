@@ -47,25 +47,54 @@ Search for matching file names in any subdirectories as well as in the current d
 List of file names/patterns of sequences to be tiled for kMers. e.g. RDPv16+RefSeq_5-18_16S_NC.fa
 There can be any number of file names (or file name patterns), and all of these will be tiled to generate a single kMer file.  
 
+## Installing and building BuildFilter
+
 BuildFilter is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
-files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. BuildFilter is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
+files are also provided, but these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. The Linux code has been built on both
+Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15.
 
-You can compile BuildFilter yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
-The BuildFilter code itself is in Program.cs in this directory, and you'll also need to download the files
-in WorkingDocsCoreLibrary. BuildFilter can be built as 'frame-work dependent' code or as 
-standalone code (AOT) with necessary run-time code linked into the BuildFilter executable. The AOT code will run on systems that do not have the 
-.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
+BuildFilter is ‘installed’ simply by copying the desired code file to an appropriate directory on your system. For example, if you want to 
+run the self-contained .Net8 BuildFilter code file on a Linux system compatible with Ubuntu 24 (glibc 2.39), you should copy the 
+BuildFilter file from the Linux64DN8FDU24 directory.You may have to set permission bits on the BuildFilter code file before you can execute it on Linix. 
 
-The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
-Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
-build BuildFilter executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
-parts of the platform run-time are linked into the executables. Pre-built BuildFilter code is provided for Windows and Linux, and 
-.NET SDKs are available that will allow BuildFilter to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 20 (for glibc 2.31) and Ubuntu 24 (for glibc 2.39). and tested on Ubuntu 24 and SUSE LES 15.5. 
+Compilation scripts are provided for both Windows (.ps1) and Linux (.sh). For example, `BuildBuildFilter_Linux64DN8AOTU24.sh` 
+will build a stand-alone BuildFilter executable targeting .NET8. This script was run on Ubuntu 24 to build the executable, and the resulting BuildFilter code will be 
+expecting glibc 2.39 or above to be available when it is run. 
 
-The command `dotnet publish ./BuildFilter.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
-framework-dependent x64 Linux BuildFilter executable, and other versions can be built by changing the name of the profile file in the 
+You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk) and these scripts assume the directory structure
+found in the GitHub repository, as shown below. 
+The BuildFilter code itself is in BuildFilter.cs in the BuildFilter directory, and you'll also need to download 
+kMers.cs, SeqFiles.cs and Sequence.cs to the WorkingDocsCoreLibrary. The BuildFilter compilation scripts are intended to be run from the 
+WorkingDogs/BuildFilter directory.
+
+```
+WorkingDogs
+	BuildFilter
+		BuildFilter.sln
+		BuildFilter
+			BuildFilter.cs
+			BuildFilter.csproj
+			Properties
+				PublishProfiles
+					<XXX>.pubxml
+	WorkingDogsCoreLibrary
+		kMers.cs
+		Sequence.cs
+		SeqFiles.cs
+```
+
+The type of executable produced is controlled by the PublishProfile (.pubxml) parameter supplied to `dotnet publish`. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. 
+AOT builds for Linux have to be done on a system that is 
+compatible with the intended execution platform as 
+the required glibc level is embedded into the executable code.
+
+You can build BuildFilter for other target systems, such as MacOS on Arm, by creating a 
+.pubxml file with the appropriate RuntimeIdentifier - see https://learn.microsoft.com/en-us/dotnet/core/rid-catalog. 
+The command `dotnet publish ./BuildFilter_v2.sln -c release /p:PublishProfile=Linux64DN10AOTFolderProfile.pubxml` 
+in the `BuildBuildFilter_Linux64DN8AOTU24.sh` script is what builds the
+framework-dependent x64 Linux BuildFilter executable, and other versions can be built by changing the name of the profile file in this 
 publish command.
 

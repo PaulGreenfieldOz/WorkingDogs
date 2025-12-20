@@ -1,3 +1,3 @@
-dotnet publish .\Blue.csproj -c release /p:PublishProfile=Win64DN8AOTFolderProfile.pubxml
+dotnet publish .\Blue.sln -c release /p:PublishProfile=Win64DN8AOTFolderProfile.pubxml
 mkdir -force Win64DN8AOT
-copy bin\Release\net8.0\publish\win-x64\Blue.exe .\Win64DN8AOT\
+copy Blue\bin\Release\net8.0\publish\win-x64\Blue.exe .\Win64DN8AOT\

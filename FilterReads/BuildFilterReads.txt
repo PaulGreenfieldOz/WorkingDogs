@@ -1,9 +1,0 @@
-#ubuntu 20
-./BuildFilterReads_Linux64DN8AOTU20.sh
-./BuildFilterReads_Linux64DN8FDU20.sh
-#ubuntu 24
-./BuildFilterReads_Linux64DN8AOTU24.sh
-./BuildFilterReads_Linux64DN8FDU24.sh
-#windows
-./BuildFilterReads_Win64DN8AOT.ps1
-./BuildFilterReads_Win64DN8FD.ps1

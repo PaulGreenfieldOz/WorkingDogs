@@ -7,7 +7,7 @@ Blue v2 tries to ensure that all the reads it are completely corrected, and uses
 The overall result of this change, and numerous others, is much improved accuracy (in relative terms). On the E. coli DH10B dataset referred to in the paper, Blue now has 99.98% of the corrected (and possibly trimmed) reads aligning with zero changes against the reference sequence, up from 99.90% previously (with _–good 80_ used in both cases).
 
 Blue v2.2 is a port onto the .NET platform. This port changes the way Blue is compiled/built, and also allows the direct processing of gzipped sequence data files (no need to unzip first).
-v2.2.1 fixed a bug in the writing of .gz files, and imporved support for correcting metagenomes with extremely low coverage reads (use -min 1 in Tessel and Blue). Also added -unzip option as writing .gz files is slow.
+v2.2.1 fixed a bug in the writing of .gz files, and improved support for correcting metagenomes with extremely low coverage reads (use -min 1 in Tessel and Blue). Also added -unzip option as writing .gz files is slow.
 
 The first step in using Blue is to generate a set of kMers (and kMer pairs) using Tessel. Tessel will also generate a histogram of the kMer repetition frequency that you can use to set the _minReps_ parameter for your Blue run. Once you have a set of kMers (a .cbt file), and (preferably) a set of corresponding kMer pairs (a .prs file), you can go ahead and correct your reads. Blue is a command-line program with the following cryptic usage hint:
 ```
@@ -45,27 +45,55 @@ The full set of Blue parameters is:
 | cbtFN |   | This the name of the kMer file to be used (produced by Tessel). Blue will also look for a .prs file with same name and use it if it finds it. |
 | reads patterns or FNs |   | These parameters specify the names of the sequence data files to be corrected. You can either supply a list of space separated files names or a filename pattern. On Windows you would normally use a pattern and let Blue turn it into a set of matching file names. On Linux, the same pattern will normally be turned into a list of file names by the shell, with equivalent results. |
 
+## Building Blue
 
 Blue is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
-files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Blue is ‘installed’ simply by copying its code file to an appropriate directory on your system. If you have glibc version issues, try one of the other Linux versions or build your own code.
+files are also provided, but these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. The Linux code has been built on both
+Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15.
 
-You can compile Blue yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
-The Blue code itself is in Program.cs in this directory, and you'll also need to download the files
-in WorkingDocsCoreLibrary. Blue can be built as 'frame-work dependent' code or as 
-standalone code (AOT) with necessary run-time code linked into the Blue executable. The AOT code will run on systems that do not have the 
-.NET run-time installed. AOT code generation is only supported from .NET 7 onwards.
+Blue is ‘installed’ simply by copying the desired code file to an appropriate directory on your system. For example, if you want to 
+run the self-contained .Net8 Blue code file on a Linux system compatible with Ubuntu 24 (glibc 2.39), you should copy the 
+Blue file from the Linux64DN8FDU24 directory.You may have to set permission bits on the Blue code file before you can execute it on Linix. 
 
-The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
-Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
-build Blue executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
-parts of the platform run-time are linked into the executables. Pre-built Blue code is provided for Windows and Linux, and 
-.NET SDKs are available that will allow Blue to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 20 (for glibc 2.31) and Ubuntu 24 (glibc 2.39), and tested on Ubuntu 24 and SUSE LES 15.5. 
+Compilation scripts are provided for both Windows (.ps1) and Linux (.sh). For example, `BuildBlue_Linux64DN8AOTU24.sh` 
+will build a stand-alone Blue executable targeting .NET8. This script was run on Ubuntu 24 to build the executable, and the resulting Blue code will be 
+expecting glibc 2.39 or above to be available when it is run. 
 
-The command `dotnet publish ./Blue.csproj -c release /p:PublishProfile=Linux64DN8FDFolderProfile.pubxml` will build a
-framework-dependent x64 Linux Blue executable, and other versions can be built by changing the name of the profile file in the 
+You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk) and these scripts assume the directory structure
+found in the GitHub repository, as shown below. 
+The Blue code itself is in Blue.cs in the Blue directory, and you'll also need to download 
+kMers.cs, SeqFiles.cs and Sequence.cs to the WorkingDocsCoreLibrary. The Blue compilation scripts are intended to be run from the 
+WorkingDogs/Blue directory.
+
+```
+WorkingDogs
+	Blue
+		Blue.sln
+		Blue
+			Blue.cs
+			Blue.csproj
+			Properties
+				PublishProfiles
+					<XXX>.pubxml
+	WorkingDogsCoreLibrary
+		kMers.cs
+		Sequence.cs
+		SeqFiles.cs
+```
+
+The type of executable produced is controlled by the PublishProfile (.pubxml) parameter supplied to `dotnet publish`. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. 
+AOT builds for Linux have to be done on a system that is 
+compatible with the intended execution platform as 
+the required glibc level is embedded into the executable code.
+
+You can build Blue for other target systems, such as MacOS on Arm, by creating a 
+.pubxml file with the appropriate RuntimeIdentifier - see https://learn.microsoft.com/en-us/dotnet/core/rid-catalog. 
+The command `dotnet publish ./Blue_v2.sln -c release /p:PublishProfile=Linux64DN10AOTFolderProfile.pubxml` 
+in the `BuildBlue_Linux64DN8AOTU24.sh` script is what builds the
+framework-dependent x64 Linux Blue executable, and other versions can be built by changing the name of the profile file in this 
 publish command.
 
 

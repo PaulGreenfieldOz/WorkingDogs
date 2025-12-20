@@ -1,7 +1,10 @@
  # Introduction
 Working Dogs is a collection of (mostly) kMer-based tools for doing useful things with DNA sequence data. 
 
-This library contains code common to all the Working Dogs pack of tools, including Blue, Pup, Kelpie and the imaginatively named FilterReads. Much of this code is concerned with kMers (short DNA strings of length 'k'). These kMers are processed in two forms: char strings or packed 2-bits per base into a ulong. The packed forms are much more efficient, but are limited to <= 32-mers. 
+This library contains code common to all the Working Dogs pack of tools, including Blue, Pup, Kelpie and the imaginatively named FilterReads. 
+Much of this code is concerned with kMers (short DNA strings of length 'k'). 
+These kMers are processed in two forms: char strings or packed 2-bits per base into a ulong. 
+The packed forms are much more efficient, but are limited to <= 32-mers. 
 
 The library consists of 9 files:  
 

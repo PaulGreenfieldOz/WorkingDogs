@@ -18,7 +18,7 @@ Other kMer-based bioinformatics tool will join the pack from time to time. The G
 
 All code is now being compiled with .NET, producing both framework-dependent and pre-packed (AOT) code files. .NET 8 and 10  (LTS) are supported. The framework-dependend
 code files need to have the corresponding .NET run-time installed, while the AOT code has any necessary run-time code bundled into
-the code file. The usual Linux glibc dependency issues has led to both Ubuntu 20 and Ubuntu 24 being used for Linux compilations. If none of the pre-compiled Linux code files work on your system, you can 
+the code file. The usual Linux glibc dependency issues has led to both Ubuntu 20 (glibc 2.31) and Ubuntu 24 (glibc 2.39) being used for Linux compilations. If none of the pre-compiled Linux code files work on your system, you can 
 install the latest supported .NET SDK and build your own bespoke code files. Later .NET releases support MacOS, both x64 and ARM) but you will have to compile this code yourself.
 
 

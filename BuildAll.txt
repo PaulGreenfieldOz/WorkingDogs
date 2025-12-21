@@ -1,101 +1,181 @@
-#ubuntu 18
+## run piece-wise on each platform from WorkingDogs directory
+
+#ubuntu 20 (for glib 2.31)
+#only with .Net8 as .Net10 not supported
 cd Blue
-./BuildBlue_Linux64DN6FD.sh
-./BuildBlue_Linux64DN7AOT.sh
-./BuildBlue_Linux64DN7FD.sh
-cd ..
-#ubuntu 18
-cd FilterReads
-./BuildFilterReads_Linux64DN6FD.sh
-./BuildFilterReads_Linux64DN7AOT.sh
-./BuildFilterReads_Linux64DN7FD.sh
-cd ..
-#ubuntu 18
-cd BuildFilter
-./BuildBuildFilter_Linux64DN6FD.sh
-./BuildBuildFilter_Linux64DN7AOT.sh
-./BuildBuildFilter_Linux64DN7FD.sh
-cd ..
-#ubuntu 18
-cd Kelpie_v2
-./BuildKelpie_Linux64DN6FD.sh
-./BuildKelpie_Linux64DN7AOT.sh
-./BuildKelpie_Linux64DN7FD.sh
-cd ..
-#ubuntu 18
-cd Tessel
-./BuildTessel_Linux64DN6FD.sh
-./BuildTessel_Linux64DN7AOT.sh
-./BuildTessel_Linux64DN7FD.sh
+./BuildBlue_Linux64DN8AOTU20.sh
+./BuildBlue_Linux64DN8FDU20.sh
 cd ..
 
-#ubuntu 22
-cd Blue
-./BuildBlue_Linux64DN8AOT.sh
-./BuildBlue_Linux64DN8FD.sh
-cd ..
-#ubuntu 22
-cd FilterReads
-./BuildFilterReads_Linux64DN8AOT.sh
-./BuildFilterReads_Linux64DN8FD.sh
-cd ..
-#ubuntu 22
 cd BuildFilter
-./BuildBuildFilter_Linux64DN8AOT.sh
-./BuildBuildFilter_Linux64DN8FD.sh
-cd ..
-#ubuntu 22
-cd Kelpie_v2
-./BuildKelpie_Linux64DN8AOT.sh
-./BuildKelpie_Linux64DN8FD.sh
-cd ..
-#ubuntu 22
-cd Tessel
-./BuildTessel_Linux64DN8AOT.sh
-./BuildTessel_Linux64DN8FD.sh
+./BuildFilterReads_Linux64DN8AOTU20.sh
+./BuildFilterReads_Linux64DN8FDU20.sh
 cd ..
 
-#windows
+cd CondenseProkkaTbl
+./BuildCondenseProkkaTbl_Linux64DN8AOTU20.sh
+./BuildCondenseProkkaTbl_Linux64DN8FDU20.sh
+cd ..
+
+cd ExtractHeadersFromFasta
+./BuildExtractHeadersFromFasta_Linux64DN8AOTU20.sh
+./BuildExtractHeadersFromFasta_Linux64DN8FDU20.sh
+cd ..
+
+cd FilterReads
+./BuildFilterReads_Linux64DN8AOTU20.sh
+./BuildFilterReadse_Linux64DN8FDU20.sh
+cd ..
+
+cd Kelpie_v2
+./BuildKelpie_Linux64DN8AOTU20.sh
+./BuildKelpie_Linux64DN8FDU20.sh
+cd ..
+
+cd Pup+Clancy
+cd Clancy
+./BuildClancy_Linux64DN8AOTU20.sh
+./BuildClancy_Linux64DN8FDU20.sh
+cd ..
+cd Pup
+./BuildPup_Linux64DN8AOTU20.sh
+./BuildPup_Linux64DN8FDU20.sh
+cd ..
+cd ..
+
+cd Tessel
+./BuildTessel_Linux64DN8AOTU20.sh
+./BuildTessel_Linux64DN8FDU20.sh
+cd ..
+
+#ubuntu 24 (for glib 2.39)
+#both .Net8 and .Net10 
 cd Blue
-./BuildBlue_Win64DN6FD.ps1
-./BuildBlue_Win64DN7AOT.ps1
-./BuildBlue_Win64DN7FD.ps1
+./BuildBlue_Linux64DN8AOTU24.sh
+./BuildBlue_Linux64DN8FDU24.sh
+./BuildBlue_Linux64DN10AOTU24.sh
+./BuildBlue_Linux64DN10FDU24.sh
+cd ..
+
+cd BuildFilter
+./BuildFilterReads_Linux64DN8AOTU24.sh
+./BuildFilterReads_Linux64DN8FDU24.sh
+./BuildFilterReads_Linux64DN10AOTU24.sh
+./BuildFilterReads_Linux64DN10FDU24.sh
+cd ..
+
+cd CondenseProkkaTbl
+./BuildCondenseProkkaTbl_Linux64DN8AOTU24.sh
+./BuildCondenseProkkaTbl_Linux64DN8FDU24.sh
+./BuildCondenseProkkaTbl_Linux64DN10AOTU24.sh
+./BuildCondenseProkkaTbl_Linux64DN10FDU24.sh
+cd ..
+
+cd ExtractHeadersFromFasta
+./BuildExtractHeadersFromFasta_Linux64DN8AOTU24.sh
+./BuildExtractHeadersFromFasta_Linux64DN8FDU24.sh
+./BuildExtractHeadersFromFasta_Linux64DN10AOTU24.sh
+./BuildExtractHeadersFromFasta_Linux64DN10FDU24.sh
+cd ..
+
+cd FilterReads
+./BuildFilterReads_Linux64DN8AOTU24.sh
+./BuildFilterReads_Linux64DN8FDU24.sh
+./BuildFilterReads_Linux64DN10AOTU24.sh
+./BuildFilterReads_Linux64DN10FDU24.sh
+cd ..
+
+cd Kelpie_v2
+./BuildKelpie_Linux64DN8AOTU24.sh
+./BuildKelpie_Linux64DN8FDU24.sh
+./BuildKelpie_Linux64DN10AOTU24.sh
+./BuildKelpie_Linux64DN10FDU24.sh
+cd ..
+
+cd Pup+Clancy
+cd Clancy
+./BuildClancy_Linux64DN8AOTU24.sh
+./BuildClancy_Linux64DN8FDU24.sh
+./BuildClancy_Linux64DN10AOTU24.sh
+./BuildClancy_Linux64DN10FDU24.sh
+cd..
+cd Pup
+./BuildPup_Linux64DN8AOTU24.sh
+./BuildPup_Linux64DN8FDU24.sh
+./BuildPup_Linux64DN10AOTU24.sh
+./BuildPup_Linux64DN10FDU24.sh
+cd ..
+cd ..
+
+cd Tessel
+./BuildTessel_Linux64DN8AOTU24.sh
+./BuildTessel_Linux64DN8FDU24.sh
+./BuildTessel_Linux64DN10AOTU24.sh
+./BuildTessel_Linux64DN10FDU24.sh
+cd ..
+
+#Windows
+#both .Net8 and .Net10 
+cd Blue
 ./BuildBlue_Win64DN8AOT.ps1
 ./BuildBlue_Win64DN8FD.ps1
+./BuildBlue_Win64DN10AOT.ps1
+./BuildBlue_Win64DN10FD.ps1
 cd ..
 
-#windows
-cd FilterReads
-./BuildFilterReads_Win64DN6FD.ps1
-./BuildFilterReads_Win64DN7AOT.ps1
-./BuildFilterReads_Win64DN7FD.ps1
+cd BuildFilter
 ./BuildFilterReads_Win64DN8AOT.ps1
 ./BuildFilterReads_Win64DN8FD.ps1
+./BuildFilterReads_Win64DN10AOT.ps1
+./BuildFilterReads_Win64DN10FD.ps1
 cd ..
 
-#windows
-cd BuildFilter
-./BuildBuildFilter_Win64DN6FD.ps1
-./BuildBuildFilter_Win64DN7AOT.ps1
-./BuildBuildFilter_Win64DN7FD.ps1
-./BuildBuildFilter_Win64DN8AOT.ps1
-./BuildBuildFilter_Win64DN8FD.ps1
+cd CondenseProkkaTbl
+./BuildCondenseProkkaTbl_Win64DN8AOT.ps1
+./BuildCondenseProkkaTbl_Win64DN8FD.ps1
+./BuildCondenseProkkaTbl_Win64DN10AOT.ps1
+./BuildCondenseProkkaTbl_Win64DN10FD.ps1
 cd ..
 
-#windows
+cd ExtractHeadersFromFasta
+./BuildExtractHeadersFromFasta_Win64DN8AOT.ps1
+./BuildExtractHeadersFromFasta_Win64DN8FD.ps1
+./BuildExtractHeadersFromFasta_Win64DN10AOT.ps1
+./BuildExtractHeadersFromFasta_Win64DN10FD.ps1
+cd ..
+
+cd FilterReads
+./BuildFilterReads_Win64DN8AOT.ps1
+./BuildFilterReads_Win64DN8FD.ps1
+./BuildFilterReads_Win64DN10AOT.ps1
+./BuildFilterReads_Win64DN10FD.ps1
+cd ..
+
 cd Kelpie_v2
-./BuildKelpie_Win64DN6FD.ps1
-./BuildKelpie_Win64DN7AOT.ps1
-./BuildKelpie_Win64DN7FD.ps1
 ./BuildKelpie_Win64DN8AOT.ps1
 ./BuildKelpie_Win64DN8FD.ps1
+./BuildKelpie_Win64DN10AOT.ps1
+./BuildKelpie_Win64DN10FD.ps1
 cd ..
 
-#windows
+cd Pup+Clancy
+cd Clancy
+./BuildClancy_Win64DN8AOT.ps1
+./BuildClancy_Win64DN8FD.ps1
+./BuildClancy_Win64DN10AOT.ps1
+./BuildClancy_Win64DN10FD.ps1
+cd..
+cd Pup
+./BuildPup_Win64DN8AOT.ps1
+./BuildPup_Win64DN8FD.ps1
+./BuildPup_Win64DN10AOT.ps1
+./BuildPup_Win64DN10FD.ps1
+cd ..
+cd ..
+
 cd Tessel
-./BuildTessel_Win64DN6FD.ps1
-./BuildTessel_Win64DN7AOT.ps1
-./BuildTessel_Win64DN7FD.ps1
 ./BuildTessel_Win64DN8AOT.ps1
 ./BuildTessel_Win64DN8FD.ps1
+./BuildTessel_Win64DN10AOT.ps1
+./BuildTessel_Win64DN10FD.ps1
 cd ..

@@ -72,15 +72,19 @@ WorkingDogs
 	Blue
 		Blue.sln
 		Blue
-			Blue.cs
+			Program.cs
 			Blue.csproj
 			Properties
 				PublishProfiles
 					<XXX>.pubxml
 	WorkingDogsCoreLibrary
 		kMers.cs
+		kMerCollections.cs
+		kMerPairs.cs
+		kMerTables.cs
 		Sequence.cs
 		SeqFiles.cs
+		TrimExtendReads.cs
 ```
 
 The type of executable produced is controlled by the PublishProfile (.pubxml) parameter supplied to `dotnet publish`. Profiles are held in the 

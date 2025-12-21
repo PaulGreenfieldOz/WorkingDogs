@@ -11,7 +11,7 @@ Kelpie V2.3 (2.3.4) is now available.
 
 Kelpie usage is basically unchanged with this release, although there are new options to enable new functionality.
 ```
-usage: Kelpie [-h] [-t #thrds] -f forwardPrimer -r reversePrimer [-filtered|-unfiltered] WGSReadsFNP extendedReadsFN (V2.0.10)
+usage: Kelpie [-h] [-t #thrds] -f forwardPrimer -r reversePrimer [-filtered|-unfiltered] WGSReadsFNP extendedReadsFN (V2.3.4)
        -h                - Write out this extended help and exit
        -threads nn       - max parallel threads to allow. max will use all available (default)
        -f forwardPrimer e.g. GTGYCAGCMGCCGCGGTAA
@@ -67,6 +67,8 @@ Compilation scripts are provided for both Windows (.ps1) and Linux (.sh). For ex
 will build a stand-alone Kelpie executable targeting .NET8. This script was run on Ubuntu 24 to build the executable, and the resulting Kelpie code will be 
 expecting glibc 2.39 or above to be available when it is run. 
 
+The current Kelpie code base is Kelpie_V2. The compile scripts generate Kelpie_v2 code and this is copied as Kelpie for compatibility. The Kelpie(v1) code base has been entirely replaced with Kelpie_v2. 
+
 You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk) and these scripts assume the directory structure
 found in the GitHub repository, as shown below. 
 The Kelpie code itself is in Kelpie.cs in the Kelpie directory, and you'll also need to download 
@@ -75,11 +77,11 @@ WorkingDogs/Kelpie directory.
 
 ```
 WorkingDogs
-	Kelpie
-		Kelpie.sln
-		Kelpie
-			Kelpie.cs
-			Kelpie.csproj
+	Kelpie_v2
+		Kelpie_v2.sln
+		Kelpie_v2
+			Program.cs
+			Kelpie_v2.csproj
 			Properties
 				PublishProfiles
 					<XXX>.pubxml

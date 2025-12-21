@@ -90,6 +90,7 @@ WorkingDogs
 					<XXX>.pubxml
 	WorkingDogsCoreLibrary
 		kMers.cs
+		kMerCollections.cs
 		Sequence.cs
 		SeqFiles.cs
 ```

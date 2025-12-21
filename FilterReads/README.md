@@ -96,13 +96,14 @@ WorkingDogs
 	FilterReads
 		FilterReads.sln
 		FilterReads
-			FilterReads.cs
+			Program.cs
 			FilterReads.csproj
 			Properties
 				PublishProfiles
 					<XXX>.pubxml
 	WorkingDogsCoreLibrary
 		kMers.cs
+		kMerCollections.cs
 		Sequence.cs
 		SeqFiles.cs
 ```

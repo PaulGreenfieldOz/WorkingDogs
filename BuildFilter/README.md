@@ -74,13 +74,14 @@ WorkingDogs
 	BuildFilter
 		BuildFilter.sln
 		BuildFilter
-			BuildFilter.cs
+			Program.cs
 			BuildFilter.csproj
 			Properties
 				PublishProfiles
 					<XXX>.pubxml
 	WorkingDogsCoreLibrary
 		kMers.cs
+		kMerCollections.cs
 		Sequence.cs
 		SeqFiles.cs
 ```

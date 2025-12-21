@@ -84,29 +84,62 @@ The 'pairs' file format is similar:
 ... The int32 is the number of times the corresponding kMer pair was seen. 
 
 
+## Installing and building Tessel
+
 Tessel is written in C# and is provided pre-compiled for Windows and Linux (and can be built for macOS). The AOT versions of these code files 
 are stand-alone and should not require the installation of any additional run-time libraries. Smaller framework-dependent (FD) code
-files are also provided, and these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
-for instructions. Tessel is ‘installed’ simply by copying its code file to an appropriate directory on your system. 
+files are also provided, but these need to have an appropriate .NET run-time installed. See https://learn.microsoft.com/en-gb/dotnet/core/install
+for instructions. The Linux code has been built on both
+Ubuntu 20 (glibc 2.31) and 24 (glibc 2.39) and tested on Ubuntu 24 and SUSE LES 15.
 
-You can compile Tessel yourself using the `dotnet publish` command. You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk).  
-The Tessel code itself is in Program.cs in this directory, and you'll also need to download the files
-in WorkingDocsCoreLibrary. Tessel can be built as 'frame-work dependent' code or as 
-standalone code (AOT) with necessary run-time code linked into the Tessel executable. The AOT code will run on systems that do not have the 
-.NET run-time installed. AOT code generation is only supported from .NET7 onwards.
+Tessel is ‘installed’ simply by copying the desired code file to an appropriate directory on your system. For example, if you want to 
+run the self-contained .Net8 Tessel code file on a Linux system compatible with Ubuntu 24 (glibc 2.39), you should copy the 
+Tessel file from the Linux64DN8FDU24 directory.You may have to set permission bits on the Tessel code file before you can execute it on Linix. 
 
-The type of executable produced by `dotnet publish` is controlled by the `PublishProfile` option. Profiles are held in the 
-Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. Small scripts are provided that will 
-build Tessel executables. The AOT builds have to be done on a system that is compatible with the intended execution targets as 
-parts of the platform run-time are linked into the executables. Pre-built Tessel code is provided for Windows and Linux, and 
-.NET SDKs are available that will allow Tessel to be built for both x64 and ARM macOS systems. The Linux code has been built on 
-Ubuntu 18 and tested on Ubuntu 22 and SUSE LES 15. 
+Compilation scripts are provided for both Windows (.ps1) and Linux (.sh). For example, `BuildTessel_Linux64DN8AOTU24.sh` 
+will build a stand-alone Tessel executable targeting .NET8. This script was run on Ubuntu 24 to build the executable, and the resulting Tessel code will be 
+expecting glibc 2.39 or above to be available when it is run. 
 
-The command `dotnet publish ./Tessel.csproj -c release /p:PublishProfile=Linux64DN6FDFolderProfile.pubxml` will build a
-framework-dependent x64 Linux Tessel executable, and other versions can be built by changing the name of the profile file in the 
+You’ll need to have installed the appropriate .NET SDK (see https://learn.microsoft.com/en-us/dotnet/core/sdk) and these scripts assume the directory structure
+found in the GitHub repository, as shown below. 
+The Tessel code itself is in Tessel.cs in the Tessel directory, and you'll also need to download 
+kMers.cs, SeqFiles.cs and Sequence.cs to the WorkingDocsCoreLibrary. The Tessel compilation scripts are intended to be run from the 
+WorkingDogs/Tessel directory.
+
+```
+WorkingDogs
+	Tessel
+		Tessel.sln
+		Tessel
+			Program.cs
+			PairTable.cs
+			MerCollections.cs
+			MerTables.cs
+			Tessel.csproj
+			Properties
+				PublishProfiles
+					<XXX>.pubxml
+	WorkingDogsCoreLibrary
+		kMers.cs
+		kMerCollections.cs
+		kMerPairs.cs
+		kMerTables.cs
+		Sequence.cs
+		SeqFiles.cs
+```
+
+The type of executable produced is controlled by the PublishProfile (.pubxml) parameter supplied to `dotnet publish`. Profiles are held in the 
+Properties/PublishProfiles directory, for both framework-dependent and AOT compilations. 
+AOT builds for Linux have to be done on a system that is 
+compatible with the intended execution platform as 
+the required glibc level is embedded into the executable code.
+
+You can build Tessel for other target systems, such as MacOS on Arm, by creating a 
+.pubxml file with the appropriate RuntimeIdentifier - see https://learn.microsoft.com/en-us/dotnet/core/rid-catalog. 
+The command `dotnet publish ./Tessel_v2.sln -c release /p:PublishProfile=Linux64DN10AOTFolderProfile.pubxml` 
+in the `BuildTessel_Linux64DN8AOTU24.sh` script is what builds the
+framework-dependent x64 Linux Tessel executable, and other versions can be built by changing the name of the profile file in this 
 publish command.
-
-
 
 
 
